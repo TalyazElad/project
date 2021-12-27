@@ -1,0 +1,163 @@
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
+#include <sys/types.h>
+#include <sys/select.h>
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
+#include <errno.h>
+#include <netdb.h>
+#include <pthread.h>
+/*	SENDER		*/
+
+#define BUFF_SIZE 1024
+#define TIMETOLIVE 15
+#define CATEGORIES 3
+#define PORTUDP 1234
+#define PORTTCP 12345
+#define MULTICASTG1 "224.61.0.4"
+#define MULTICASTG2 "224.61.0.5"
+#define MULTICASTG3 "224.61.0.6"
+
+/*messages we send*/
+#define WELCOME 0
+#define ANNOUNCE 1
+#define PERMITSONG 2
+#define INVALIDCOMMAND 3
+#define NEWSTATIONS 4
+
+/*messages we can receive*/
+#define HELLO 0
+#define ASKSONG 1
+#define UPSONG 2
+
+/* A linked list node */
+typedef struct udpNodes {
+    int CategoryFD;
+    int CategoryNumber;
+    uint8_t questionNameSize;
+    char* questionName;
+    FILE *fp;
+    struct sockaddr_in category;
+    struct udpNodes *next;
+} udpNode;
+
+typedef struct tcpClients {
+    int clientFD;
+    int clientID;
+    pthread_t th;
+    struct sockaddr_in client;
+    struct tcpClients *next;
+} tcpClient;
+
+void* welcome_func();
+void* TCPManager(void* client);
+void shutdown_and_goodbye();
+void invalid_command(int type, tcpClient *client);
+void removeClinet(tcpClient* del);
+void releaseUdpNode();
+void releaseTCPclients();
+
+udpNode *head = NULL, *temp, *temp2 , *temps[3] ;
+tcpClient *TCPhead = NULL, *Ttemp = NULL, *Ttemp2 = NULL;
+int welcome_socket, client_socket_fd, noOfClients = 0, portnoTCP, uploadFlag = 0, qFlaf = 1;
+uint8_t temp8;
+uint16_t numSongs, temp16, temp162, portUDP = PORTUDP;
+uint32_t multiCastG[3], temp32;
+struct sockaddr_in cli_addr;
+pthread_mutex_t lock;
+pthread_t welcome_th;
+u_char ttl = TIMETOLIVE;
+char* Q1[] = {"yes?","no?","ok?"};
+char** Q[] = {Q1};
+
+int main(int argc, char *argv[]) {
+    socklen_t addrSize;
+    int threadVal, one = 1;
+    int server_socket_fd,state;
+    struct sockaddr_in serv_addr;
+    int n, i, byte_no, counter = 0, sum_of_data_sent = 0;
+    char *quesionBuf[BUFF_SIZE]; // fill in the buffer in Q.
+    // error check command line arguments
+    if (argc < 4) {
+        perror("ERROR, arguments are missing\n");
+        exit(EXIT_FAILURE);
+    }
+    // set the UDP port multicast
+//    portUDP = atoi(argv[3]);
+    multiCastG[0] = inet_addr((const char *) MULTICASTG1);
+    multiCastG[1] = inet_addr((const char *) MULTICASTG2);
+    multiCastG[2] = inet_addr((const char *) MULTICASTG3);
+    memset(temps,'\0',3);
+    //numSongs = argc - 4;  todo delete
+    //opening udp threads for songs received in argv
+    for(i = 0; i < CATEGORIES; i++) {
+        temp = (udpNode *)malloc(sizeof(udpNode));
+        if(!temp) {
+            printf("ERROR malloc udpNode\n");
+            shutdown_and_goodbye();
+            return 1;
+        }
+        temp -> CategoryNumber = i;
+        temp -> category.sin_family = AF_INET;
+        temp -> category.sin_port = htons(portUDP);
+        temp->category.sin_addr.s_addr = multiCastG[i];
+        temp->CategoryFD = socket(AF_INET, SOCK_DGRAM, 0);
+        if(temp->CategoryFD < 0) {
+            perror("ERROR in opening UDP socket\n");
+            shutdown_and_goodbye();
+            return 1;
+        }
+        setsockopt(temp -> CategoryFD, IPPROTO_IP, IP_MULTICAST_TTL, &ttl, sizeof(ttl));
+        temps[i] = temp;
+    }
+    // setup socket - set TCP
+    welcome_socket = socket(AF_INET, SOCK_STREAM, 0);
+    if (welcome_socket < 0) {
+        perror("ERROR opening socket");
+        shutdown_and_goodbye();
+        exit(EXIT_FAILURE);
+    }
+    // setup server information
+    memset((char *) &serv_addr, 0, sizeof(serv_addr));
+//    portnoTCP = atoi(argv[1]); //tcp port
+    serv_addr.sin_family = AF_INET;
+    serv_addr.sin_addr.s_addr = htonl(INADDR_ANY);
+    serv_addr.sin_port = htons(PORTTCP); // tcp port
+    memset(serv_addr.sin_zero, '\0', sizeof(serv_addr.sin_zero));
+
+    // resolve binding issues in the os
+    setsockopt(welcome_socket,SOL_SOCKET,SO_REUSEADDR,(char *) &one,sizeof(int));
+
+    // bind the socket to an address
+    if (bind(welcome_socket, (struct sockaddr *) &serv_addr, sizeof(serv_addr)) < 0) {
+        perror("ERROR on binding");
+        shutdown_and_goodbye();
+        exit(EXIT_FAILURE);
+    }
+
+    threadVal = pthread_create(&welcome_th, NULL, welcome_func, NULL);
+    if(threadVal != 0 ) {
+        perror("ERROR opening welcome thread\n");
+        shutdown_and_goodbye();
+        exit(EXIT_FAILURE);
+    }
+    while(qFlaf) {
+        i = 0 ;
+        while(i < 3) {
+            // save question into buffer
+            if(sendto(temps[i]->CategoryFD, quesionBuf, sizeof(songBuff), 0, (struct sockaddr*) &temp->station, sizeof(temp->station)) < 0) {
+                perror("ERROR in sending data:");
+                shutdown_and_goodbye();
+                return 1;
+            }
+            i++ ;
+        }
+        usleep(62500);
+    }
+    shutdown_and_goodbye();
+    pthread_join(welcome_th, NULL);
+    return 1;
+}
