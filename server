@@ -62,11 +62,11 @@ void releaseTCPclients();
 
 udpNode *head = NULL, *temp, *temp2 , *temps[3] ;
 tcpClient *TCPhead = NULL, *Ttemp = NULL, *Ttemp2 = NULL;
-int welcome_socket, client_socket_fd, noOfClients = 0, portnoTCP, uploadFlag = 0, qFlaf = 1;
+int welcome_socket, client_socket_fd, noOfClients = 0, portTCP, uploadFlag = 0, qFlaf = 1;
 uint8_t temp8;
 uint16_t numSongs, temp16, temp162, portUDP = PORTUDP;
 uint32_t multiCastG[3], temp32;
-struct sockaddr_in cli_addr;
+struct sockaddr_in client_addr;
 pthread_mutex_t lock;
 pthread_t welcome_th;
 u_char ttl = TIMETOLIVE;
@@ -88,12 +88,12 @@ int main(int argc, char *argv[]) {
     // set the UDP port multicast
 //    portUDP = atoi(argv[3]);
     multiCastG[0] = inet_addr((const char *) MULTICASTG1);
-    multiCastG[1] = inet_addr((const char *) MULTICASTG2);
-    multiCastG[2] = inet_addr((const char *) MULTICASTG3);
+//    multiCastG[1] = inet_addr((const char *) MULTICASTG2);
+//    multiCastG[2] = inet_addr((const char *) MULTICASTG3);
     memset(temps,'\0',3);
     //numSongs = argc - 4;  todo delete
     //opening udp threads for songs received in argv
-    for(i = 0; i < CATEGORIES; i++) {
+    for(i = 0; i < 1; i++) {
         temp = (udpNode *)malloc(sizeof(udpNode));
         if(!temp) {
             printf("ERROR malloc udpNode\n");
@@ -113,7 +113,7 @@ int main(int argc, char *argv[]) {
         setsockopt(temp -> CategoryFD, IPPROTO_IP, IP_MULTICAST_TTL, &ttl, sizeof(ttl));
         temps[i] = temp;
     }
-    // setup socket - set TCP
+    // setup socket - set TCP !
     welcome_socket = socket(AF_INET, SOCK_STREAM, 0);
     if (welcome_socket < 0) {
         perror("ERROR opening socket");
@@ -122,10 +122,10 @@ int main(int argc, char *argv[]) {
     }
     // setup server information
     memset((char *) &serv_addr, 0, sizeof(serv_addr));
-//    portnoTCP = atoi(argv[1]); //tcp port
+    portTCP = atoi(PORTTCP); //tcp port
     serv_addr.sin_family = AF_INET;
     serv_addr.sin_addr.s_addr = htonl(INADDR_ANY);
-    serv_addr.sin_port = htons(PORTTCP); // tcp port
+    serv_addr.sin_port = htons(portTCP); // tcp port
     memset(serv_addr.sin_zero, '\0', sizeof(serv_addr.sin_zero));
 
     // resolve binding issues in the os
@@ -144,20 +144,376 @@ int main(int argc, char *argv[]) {
         shutdown_and_goodbye();
         exit(EXIT_FAILURE);
     }
-    while(qFlaf) {
-        i = 0 ;
-        while(i < 3) {
+    i = 0 ;
+    while(qFlaf)
+    {
             // save question into buffer
-            if(sendto(temps[i]->CategoryFD, quesionBuf, sizeof(songBuff), 0, (struct sockaddr*) &temp->station, sizeof(temp->station)) < 0) {
-                perror("ERROR in sending data:");
-                shutdown_and_goodbye();
-                return 1;
-            }
-            i++ ;
+        if(sendto(temps[0]->CategoryFD, quesionBuf[i], sizeof(quesionBuf[i]), 0, (struct sockaddr*)
+                &temp->category, sizeof(temp->category)) < 0)
+        {
+            perror("ERROR in sending data:");
+            shutdown_and_goodbye();
+            return 1;
         }
-        usleep(62500);
+        i++ ;
     }
+//        usleep(62500);
     shutdown_and_goodbye();
     pthread_join(welcome_th, NULL);
     return 1;
+}
+
+// welcome
+void* welcome_func() {
+    int thVal, retVal, i;
+    char input[10], addr[INET_ADDRSTRLEN], buff[3];
+    tcpClient *cPtr;
+    socklen_t addr_size;
+    fd_set fds;
+    udpNode *wPtr;
+
+    printf("Entering welcome thread\n");
+    listen(welcome_socket, 100);  // limit to 1 and try to add 2.
+    addr_size = sizeof(client_addr);
+    while(qFlaf) {
+        memset(input, '\0', 10);
+        printf("Please type q to quit\n");
+        FD_ZERO(&fds);
+        FD_SET(welcome_socket, &fds);
+        FD_SET(fileno(stdin), &fds);
+        retVal = select(FD_SETSIZE, &fds, NULL, NULL, NULL);
+        if(retVal <= 0 && (errno != EINTR))
+        {
+            printf("ERROR in select, HELLO\n");
+            shutdown_and_goodbye();
+            qFlaf = 0;
+            pthread_exit(&welcome_th);
+        }
+        // checks if the welcome_socket is in the table
+        if(FD_ISSET(welcome_socket, &fds))
+        {
+            noOfClients++;
+            Ttemp = (tcpClient*)malloc(sizeof(tcpClient));
+            if(Ttemp == NULL)
+            {
+                printf("ERROR allocating memory for tcp client\n");
+                shutdown_and_goodbye();
+                qFlaf = 0;
+                pthread_exit(&welcome_th);
+            }
+            Ttemp -> client.sin_family = AF_INET; //   IPv4
+            Ttemp -> client.sin_addr.s_addr = htonl(INADDR_ANY);
+            Ttemp -> client.sin_port = htons(portTCP);
+            Ttemp -> clientFD = accept(welcome_socket, (struct sockaddr *) &(Ttemp -> client), &addr_size);
+            // thread creating for each client
+            thVal = pthread_create(&(Ttemp -> th), NULL, TCPManager, Ttemp);
+            if(thVal != 0)
+            {
+                printf("ERROR opening thread\n");
+                shutdown_and_goodbye();
+                qFlaf = 0;
+                pthread_exit(&welcome_th);
+            }
+            Ttemp -> next = NULL;
+            if(noOfClients == 1)
+            {
+                TCPhead = Ttemp;
+                Ttemp2 = Ttemp;
+                Ttemp2 -> next = NULL;
+            } else
+            {
+                Ttemp2 -> next = Ttemp;
+                Ttemp2 = Ttemp;
+                Ttemp = Ttemp -> next;
+            }
+        } else if (FD_ISSET(fileno(stdin), &fds))
+        {
+            scanf("%10s", input);
+            if(strlen(input) != 1)
+                input[0] = 0; ///so it will go to default
+            switch(input[0])
+            {
+                case 'q':
+                    printf("We are closing the server after user request, we free all the memory and close all the sockets\n");
+                    shutdown_and_goodbye();
+                    qFlaf = 0;
+                    break;
+                default:
+                    printf("Please retry by enter a valid command\n");
+            } //switch
+        } //else if
+    } //while
+}
+
+// TCP Manager
+void* TCPManager(void* client) {
+    int i=0, helloFlag = 1, retVal, byteCount, num_parts, alreadyHave = 0, tcpqFlag = 1;
+    tcpClient *cl = (tcpClient*)client, *tPtr;
+    fd_set fds;
+    uint8_t commandType;
+    uint16_t staNum;
+    char buffer[BUFF_SIZE], inbox[BUFF_SIZE + 1];
+    udpNode *sPtr, *tempi;
+    char *newSongName;
+    //struct for Timeout in select
+    struct timeval timeout;
+    /*if there is a problem with a specific client we are closing him only*/
+    while(tcpqFlag) {
+        FD_ZERO(&fds);
+        FD_SET(cl -> clientFD , &fds);
+        if(helloFlag) {
+            //define the time for timeout
+            timeout.tv_sec = 0;
+            timeout.tv_usec = 300000;
+            retVal = select(FD_SETSIZE, &fds, NULL, NULL, &timeout);
+        } else {
+            retVal = select(FD_SETSIZE, &fds, NULL, NULL, NULL);
+        }
+        if(retVal <= 0 && (errno != EINTR)) {
+            if(helloFlag) {
+                printf("Timeout - didn't received HELLO\nRemoving client\n");
+                removeClinet(cl);
+            }
+            break;
+        }
+        if(FD_ISSET(cl -> clientFD, &fds))
+        {
+            // receiving massage from client
+            if((byteCount = read(cl -> clientFD, inbox, BUFF_SIZE)) <= 0)
+            {
+                printf("client closed the connection\n");
+                removeClinet(cl);
+                tcpqFlag = 0;
+                break;
+            }
+            commandType = (uint8_t) inbox[0];
+            switch(commandType) {
+                case HELLO:
+                    if(!helloFlag) {
+                        invalid_command(3, cl);
+                        tcpqFlag = 0;
+                        break;
+                    }
+                    if(byteCount != 3) {
+                        invalid_command(6, cl);
+                        tcpqFlag = 0;
+                        break;
+                    }
+                    if(inbox[1] || inbox[2]) {
+                        invalid_command(6, cl);
+                        tcpqFlag = 0;
+                        break;
+                    }
+                    helloFlag = 0;
+                    buffer[0] = WELCOME;
+                    //temp162 = htons(numSongs);
+                    temp16 = htons(portUDP);
+                    temp32 = htonl(multiCastG[0]);
+                    memcpy(buffer + 1, &temp162, 2);
+                    memcpy(buffer + 3, &temp32, 4);
+                    memcpy(buffer + 7, &temp16, 2);
+                    if(send(cl -> clientFD, &buffer, 9, 0) != 9) {
+                        printf("wrong amount of byte sent\n");
+                        removeClinet(cl);
+                        tcpqFlag = 0;
+                        break;
+                    }
+                    break;
+                case ASKSONG:
+                    if(helloFlag) {
+                        invalid_command(2, cl);
+                        tcpqFlag = 0;
+                        break;
+                    }
+                    if(byteCount != 3) {
+                        invalid_command(6, cl);
+                        tcpqFlag = 0;
+                        break;
+                    }
+                    staNum = 0;
+                    staNum = inbox[1]*10;
+                    staNum += inbox[2];
+                    if(staNum >= numSongs) {
+                        invalid_command(2, cl);
+                        tcpqFlag = 0;
+                        break;
+                    }
+                    sPtr = head;
+                    while(sPtr != NULL) {
+                        if(sPtr -> stationNumber == staNum)
+                            break;
+                        sPtr = sPtr -> next;
+                    }
+                    memset(buffer, '\0', BUFF_SIZE);
+                    buffer[0] = ANNOUNCE;
+                    buffer[1] = sPtr -> songNameSize;
+                    memcpy(buffer + 2, sPtr -> songName, sPtr -> songNameSize);
+                    if((byteCount = send(cl -> clientFD, &buffer, 2 + (sPtr -> songNameSize), 0)) != 2 + (sPtr -> songNameSize)) {
+                        printf("announce: wrong amount of byte sent\n");
+                        removeClinet(cl);
+                        tcpqFlag = 0;
+                    }
+                    break;
+                case UPSONG:
+                    if(helloFlag) {
+                        invalid_command(2, cl);
+                        tcpqFlag = 0;
+                        break;
+                    }
+                    if(byteCount < 5) {
+                        invalid_command(6, cl);
+                        tcpqFlag = 0;
+                        break;
+                    }
+                    temp32 = htonl(*(((uint32_t*) (&(inbox)[1]))));
+                    if(temp32 < 2000 || temp32 > 10000000) {
+                        invalid_command(4, cl);
+                        tcpqFlag = 0;
+                        break;
+                    }
+                    temp8 = inbox[5];
+                    newSongName = (char*)malloc(temp8 + 1);
+                    memcpy(newSongName, (inbox + 6), temp8 + 1);
+                    newSongName[temp8] = '\0';
+                    tempi = head;
+                    while(tempi != NULL) {
+                        if(strcmp(tempi -> songName, newSongName) == 0) {
+                            alreadyHave = 1;
+                            printf("This song has a station\n");
+                            break;
+                        }
+                        tempi = tempi -> next;
+                    }
+                    if(uploadFlag || alreadyHave) { /*decline request for UpSong - someone else is uploading*/
+                        buffer[0] = PERMITSONG;
+                        buffer[1] = 0;
+                        free(newSongName);
+                        if((byteCount = send(cl -> clientFD, &buffer, 2, 0)) != 2) {
+                            printf("Wrong amount of byte sent\n");
+                            removeClinet(cl);
+                            tcpqFlag = 0;
+                            break;
+                        }
+                        alreadyHave = 0;
+                    } else {
+                        uploadFlag = 1;
+                        /*sending approval*/
+                        buffer[0] = PERMITSONG;
+                        buffer[1] = 1;
+                        if((byteCount = send(cl -> clientFD, &buffer, 2, 0)) != 2) {
+                            printf("Wrong amount of byte sent\n");
+                            removeClinet(cl);
+                            tcpqFlag = 0;
+                            break;
+                        }
+                        /*arranging the new song node*/
+                        sPtr = (udpNode*)malloc(sizeof(udpNode));
+                        sPtr -> songNameSize = temp8;
+                        sPtr -> songName = newSongName;
+                        if((sPtr -> fp = fopen(sPtr -> songName, "w")) == NULL) {
+                            printf("ERROR opening file\n");
+                            removeClinet(cl);
+                            tcpqFlag = 0;
+                            break;
+                        }
+                        num_parts = 0;
+                        /*receiving song*/
+                        while(num_parts < temp32) {
+                            timeout.tv_sec = 0;
+                            timeout.tv_usec = 3000000;
+                            FD_ZERO(&fds);
+                            FD_SET(cl -> clientFD , &fds);
+                            printf("waiting %d..\n", ++i);
+                            retVal = select(FD_SETSIZE, &fds, NULL, NULL, &timeout);
+                            if(retVal <= 0 && (errno != EINTR)) {
+                                uploadFlag = 0;
+                                invalid_command(7,cl);
+                                fclose(sPtr -> fp);
+                                free(sPtr -> songName);
+                                free(sPtr);
+                                break;//breaks the while
+                            }
+                            /*need to check if need to add timeout here!!!!!!!!!!!!!!!!!!!!!!!!!!!!!*/
+                            if((byteCount = read(cl -> clientFD, inbox, BUFF_SIZE)) <= 0) {
+                                printf("ERROR receiving song\n");
+                                fclose(sPtr -> fp);
+                                free(sPtr -> songName);
+                                free(sPtr);
+                                removeClinet(cl);
+                                tcpqFlag = 0;
+                                break;//breaks the while
+                            }
+                            num_parts += byteCount;
+                            fwrite(inbox, 1, byteCount, sPtr -> fp);
+                        }
+                        if(num_parts < temp32)
+                            break;//to break the switch in case of an error
+                        printf("FINISHED RECEIVING\n");
+                        /*error - in file we need to sent with. closing server*/
+                        if((fclose(sPtr -> fp)) != 0) {
+                            printf("ERROR closing file\n");
+                            free(sPtr -> songName);
+                            free(sPtr);
+                            qFlaf = 0;
+                            tcpqFlag = 0;
+                            break;
+                        }
+                        /*error - in file we need to sent with. closing server*/
+                        if((sPtr -> fp = fopen(sPtr -> songName, "r")) == NULL) {
+                            printf("ERROR opening file\n");
+                            free(sPtr -> songName);
+                            free(sPtr);
+                            qFlaf = 0;
+                            tcpqFlag = 0;
+                            break;
+                        }
+                        printf("Opened file for reading\n");
+                        numSongs++;
+                        sPtr -> stationNumber = numSongs - 1;
+                        sPtr -> next = NULL;
+                        sPtr -> station.sin_family = AF_INET;
+                        sPtr -> station.sin_port = htons(portnoUDP);
+                        sPtr -> station.sin_addr.s_addr = mCastG + htonl(numSongs - 1);
+                        sPtr -> stationFD = socket(AF_INET, SOCK_DGRAM, 0);
+                        printf("opened socket\n");
+                        /*error - opening UDP socket. closing server*/
+                        if(sPtr -> stationFD < 0) {
+                            perror("ERROR in opening UDP socket\n");
+                            fclose(sPtr -> fp);
+                            free(sPtr -> songName);
+                            free(sPtr);
+                            qFlaf = 0;
+                            tcpqFlag = 0;
+                            break;
+                        }
+                        setsockopt(sPtr -> stationFD, IPPROTO_IP, IP_MULTICAST_TTL, &ttl, sizeof(ttl));
+                        /*adding the song to the list*/
+                        tempi = head;
+                        while(tempi->next != NULL)
+                            tempi = tempi -> next;
+                        tempi -> next = sPtr;
+                        printf("new song struct added\n");
+                        tPtr = TCPhead;
+                        while(tPtr != NULL) {
+                            memset(buffer, '\0', BUFF_SIZE);
+                            buffer[0] = NEWSTATIONS;
+                            temp16 = htons(numSongs);
+                            memcpy(buffer + 1, &temp16, 2);
+                            if((byteCount = send(tPtr -> clientFD, &buffer, 3, 0)) != 3) {
+                                printf("Wrong amount of byte sent (newStation)\n");
+                                shutdown_and_goodbye();
+                                tcpqFlag = 0;
+                                qFlaf = 0;
+                            }
+                            tPtr = tPtr -> next;
+                        }
+                        printf("NEW STATION SENT\n");
+                        uploadFlag = 0;
+                    }
+                    break;
+                default:
+                    invalid_command(5, cl);
+            }//switch
+        }//if fd_isset
+    }//while 1
 }
