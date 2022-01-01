@@ -80,16 +80,10 @@ int* score[4] = {0,0,0,0};
 int IDs[4] = {0,0,0,0};
 
 
-int main(int argc, char *argv[]) {
+int main() {
     int threadVal, one = 1;
     struct sockaddr_in serv_addr;
     int i;
-    char *quesionBuf[BUFF_SIZE]; // fill in the buffer in Q.
-    // error check command line arguments
-    if (argc < 4) {
-        perror("ERROR, arguments are missing\n");
-        exit(EXIT_FAILURE);
-    }
     // set the UDP port multicast
 //    portUDP = atoi(argv[3]);
     multiCastG[0] = inet_addr((const char *) MULTICASTG1);
@@ -131,12 +125,13 @@ int main(int argc, char *argv[]) {
         shutdown_and_goodbye();
         exit(EXIT_FAILURE);
     }
+
     // setup server information
     memset((char *) &serv_addr, 0, sizeof(serv_addr));
-    portTCP = atoi(PORTTCP); //tcp port
+
     serv_addr.sin_family = AF_INET;
     serv_addr.sin_addr.s_addr = htonl(INADDR_ANY);
-    serv_addr.sin_port = htons(portTCP); // tcp port
+    serv_addr.sin_port = htons(PORTTCP); // tcp port
     memset(serv_addr.sin_zero, '\0', sizeof(serv_addr.sin_zero));
 
     // resolve binding issues in the os
@@ -155,21 +150,7 @@ int main(int argc, char *argv[]) {
         shutdown_and_goodbye();
         exit(EXIT_FAILURE);
     }
-    i = 0 ;
-    while(qFlaf)
-    {
-            // save question into buffer
-        if(sendto(temps[0]->CategoryFD, quesionBuf[i], sizeof(quesionBuf[i]), 0, (struct sockaddr*)
-                &temp->category, sizeof(temp->category)) < 0)
-        {
-            perror("ERROR in sending data:");
-            shutdown_and_goodbye();
-            return 1;
-        }
-        i++ ;
-    }
-//        usleep(62500);
-    shutdown_and_goodbye();
+//    shutdown_and_goodbye();
     pthread_join(welcome_th, NULL);
     return 1;
 }
@@ -245,7 +226,7 @@ void* welcome_func() {
             switch(input[0])
             {
                 case 'q':
-                    printf("We are closing the server after user request, we free all the memory and close all the sockets\n");
+                    printf("We are closing the server after user request,\nwe free all the memory and close all the sockets\n");
                     shutdown_and_goodbye();
                     qFlaf = 0;
                     break;
@@ -610,7 +591,7 @@ void releaseUdpNode() {
 
 void releaseTCPclients() {
     tcpClient *aPtr = TCPhead, *aPtr2;
-    if(aPtr -> next = NULL) { // there is only one client
+    if(aPtr -> next == NULL) { // there is only one client
         if(close(aPtr -> clientFD) < 0)
             perror("ERROR closing TCP socket\n");
         free(aPtr);
