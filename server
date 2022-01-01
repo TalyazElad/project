@@ -8,7 +8,6 @@
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include <errno.h>
-#include <netdb.h>
 #include <pthread.h>
 /*	SENDER		*/
 
@@ -26,20 +25,18 @@
 #define INFOACK 1
 #define QUESTION 2
 #define FIN 3
+#define INVALIDCOMMAND 4
 
-/*messages we can receive*/
+/*messages we receive*/
 #define HELLO 0
-#define INFO 1 // ASKSONG
-#define ANSWER 2 //UPSONG
+#define INFO 1
+#define ANSWER 2
 #define QUIT 3
 
 /* A linked list node */
 typedef struct udpNodes {
     int CategoryFD;
     int CategoryNumber;
-    uint8_t questionNameSize;
-    char* questionName;
-    FILE *fp;
     struct sockaddr_in category;
     struct udpNodes *next;
 } udpNode;
@@ -67,9 +64,8 @@ void releaseTCPclients();
 
 udpNode *head = NULL, *temp, *temp2 , *temps[3] ;
 tcpClient *TCPhead = NULL, *Ttemp = NULL, *Ttemp2 = NULL;
-int welcome_socket, client_socket_fd, noOfClients = 0, portTCP, uploadFlag = 0, qFlaf = 1 ,numOfPlay = 0;
-uint8_t temp8;
-uint16_t numSongs, temp16, temp162, portUDP = PORTUDP;
+int welcome_socket , noOfClients = 0, portTCP, qFlaf = 1 ;
+uint16_t  temp16, portUDP = PORTUDP;
 uint32_t multiCastG[3], temp32;
 struct sockaddr_in client_addr;
 pthread_mutex_t lock;
@@ -85,11 +81,9 @@ int IDs[4] = {0,0,0,0};
 
 
 int main(int argc, char *argv[]) {
-    socklen_t addrSize;
     int threadVal, one = 1;
-    int server_socket_fd,state;
     struct sockaddr_in serv_addr;
-    int n, i, byte_no, counter = 0, sum_of_data_sent = 0;
+    int i;
     char *quesionBuf[BUFF_SIZE]; // fill in the buffer in Q.
     // error check command line arguments
     if (argc < 4) {
@@ -102,8 +96,6 @@ int main(int argc, char *argv[]) {
 //    multiCastG[1] = inet_addr((const char *) MULTICASTG2);
 //    multiCastG[2] = inet_addr((const char *) MULTICASTG3);
     memset(temps,'\0',3);
-    //numSongs = argc - 4;  todo delete
-    //opening udp threads for songs received in argv
     for(i = 0; i < 1; i++) {
         temp = (udpNode *)malloc(sizeof(udpNode));
         if(!temp) {
@@ -122,7 +114,15 @@ int main(int argc, char *argv[]) {
             return 1;
         }
         setsockopt(temp -> CategoryFD, IPPROTO_IP, IP_MULTICAST_TTL, &ttl, sizeof(ttl));
-        temps[i] = temp;
+        if(i == 0) {
+            head = temp;
+            temp2 = head;
+            head -> next = NULL;
+        } else {
+            temp2 -> next = temp;
+            temp2 = temp2 -> next;
+            temp = temp2;
+        }
     }
     // setup socket - set TCP !
     welcome_socket = socket(AF_INET, SOCK_STREAM, 0);
@@ -265,7 +265,6 @@ void* TCPManager(void* client) {
     uint16_t catnum;
     char buffer[BUFF_SIZE], inbox[BUFF_SIZE + 1];
     udpNode *sPtr, *tempi;
-    char *newSongName;
     //struct for Timeout in select
     struct timeval timeout;
     /*if there is a problem with a specific client we are closing him only*/
@@ -317,10 +316,8 @@ void* TCPManager(void* client) {
                     }
                     helloFlag = 0;
                     buffer[0] = HELLOACK;
-                    //temp162 = htons(numSongs);
                     temp16 = htons(portUDP);
                     temp32 = htonl(multiCastG[0]);
-                    //memcpy(buffer + 1, &temp162, 2);
                     memcpy(buffer + 1, &temp32, 4);
                     memcpy(buffer + 5, &temp16, 2);
                     if(send(cl -> clientFD, &buffer, 7, 0) != 7) {
@@ -341,20 +338,6 @@ void* TCPManager(void* client) {
                         tcpqFlag = 0;
                         break;
                     }
-//                    catnum = 1;
-                    //staNum = inbox[1]*10;
-                    //staNum += inbox[2];
-//                    if(staNum >= numSongs) {
-//                        invalid_command(2, cl);
-//                        tcpqFlag = 0;
-//                        break;
-//                    }
-//                    sPtr = head;
-//                    while(sPtr != NULL) {
-//                        if(sPtr -> CategoryNumber == catnum)
-//                            break;
-//                        sPtr = sPtr -> next;
-//                    }
                     /* age,sizename,name got from the client */
                     cl->clientNickNameSize = inbox[2];
                     cl->clientAge = inbox[1];
@@ -370,9 +353,8 @@ void* TCPManager(void* client) {
                     memset(buffer, '\0', BUFF_SIZE);
                     buffer[0] = INFOACK;
                     buffer[1] = cl->clientID;
-//                    memcpy(buffer + 2, sPtr -> songName, sPtr -> songNameSize);
                     if((byteCount = send(cl -> clientFD, &buffer, 2 , 0)) != 2 ) {
-                        printf("announce: wrong amount of byte sent\n");
+                        printf("INFOACK: wrong amount of byte sent\n");
                         removeClinet(cl);
                         tcpqFlag = 0;
                         break;
@@ -391,7 +373,7 @@ void* TCPManager(void* client) {
                                                (struct sockaddr*) &temp->category,
                                                        sizeof(temp->category)) != (2+size0fQ))
                                                        {
-                            printf("announce: wrong amount of byte sent\n"); // change
+                            printf("FirstQ: wrong amount of byte sent\n"); // change
                                removeClinet(cl);
                                tcpqFlag = 0;
                                break;
@@ -399,6 +381,16 @@ void* TCPManager(void* client) {
                     }
                     break;
                 case ANSWER:
+                        if(helloFlag) {
+                            invalid_command(2, cl);
+                            tcpqFlag = 0;
+                            break;
+                        }
+                        if(byteCount != 3) {
+                            invalid_command(6, cl);
+                            tcpqFlag = 0;
+                            break;
+                        }
                         size0fanswer = inbox[1];
                         memcpy(answers[cl->clientID-1],inbox[2],size0fanswer);
                         // todo wait some time for the data to calculate ? to all the clients
@@ -416,7 +408,7 @@ void* TCPManager(void* client) {
                                       (struct sockaddr*) &temp->category,
                                       sizeof(temp->category)) != (2+size0fQ))
                             {
-                                printf("announce: wrong amount of byte sent\n"); // change
+                                printf("Questions: wrong amount of byte sent\n"); // change
                                 removeClinet(cl);
                                 tcpqFlag = 0;
                                 break;
@@ -440,13 +432,23 @@ void* TCPManager(void* client) {
                                       (struct sockaddr*) &temp->category,
                                       sizeof(temp->category)) != 2)
                             {
-                                printf("announce: wrong amount of byte sent\n"); // change
+                                printf("Winner: wrong amount of byte sent\n"); // change
                                 removeClinet(cl);
                                 tcpqFlag = 0;
                                 break;
                             }
                         }
                 case QUIT:
+                    if(helloFlag) {
+                        invalid_command(2, cl);
+                        tcpqFlag = 0;
+                        break;
+                    }
+                    if(byteCount != 3) {
+                        invalid_command(6, cl);
+                        tcpqFlag = 0;
+                        break;
+                    }
                     yesno = inbox[1];
                     if(yesno == 0) {
                         removeClinet(cl);
@@ -521,7 +523,7 @@ void removeClinet(tcpClient* del)
             if(close(del -> clientFD) < 0)
                 perror("ERROR closing socket\n");
             free(del);
-            noOfClients -- ; // noOfClients = 0 ?? 
+            noOfClients -- ; // noOfClients = 0 ??
             TCPhead = Ttemp2;
         }
     } else {//if del != head
@@ -536,5 +538,112 @@ void removeClinet(tcpClient* del)
         free(Ttemp);
     }//else
     pthread_mutex_unlock(&lock);
-    
+
+}
+
+void invalid_command(int type , tcpClient *client)
+{
+    char *str, buffer[BUFF_SIZE];
+    int byteCount;
+    uint8_t len;
+    memset(buffer, '\0', BUFF_SIZE);
+    buffer[0] = INVALIDCOMMAND;
+    switch(type) {
+        case 1:
+            printf("Category number given does not exist\n");
+            str = "Category number given does not exist";
+            len = strlen(str);
+            buffer[1] = len;
+            break;
+        case 2:
+            printf("Hello did not sent yet from user and another message was received\n");
+            str = "Hello did not sent yet from user and another message was received";
+            len = strlen(str);
+            buffer[1] = len;
+            break;
+        case 3:
+            printf("More than one HELLO sent\n");
+            str = "More than one HELLO sent";
+            len = strlen(str);
+            buffer[1] = len;
+            break;
+        case 5:
+            printf("Unknown command received\n");
+            str = "Unknown command received";
+            len = strlen(str);
+            buffer[1] = len;
+            break;
+        case 6:
+            printf("Wrong message format\n");
+            str = "Wrong message format";
+            len = strlen(str);
+            buffer[1] = len;
+            break;
+    }//switch
+    memcpy(buffer + 2, str, len);
+    if((byteCount = send(client -> clientFD, &buffer, 2 + len, 0)) < 0)
+        printf("ERROR sending invalid message\n");
+    removeClinet(client);
+}
+
+void releaseUdpNode() {
+    udpNode *uPtr = head, *uPtr2;
+    if(uPtr -> next == NULL) { //only one in the list
+        if(close(uPtr -> CategoryFD) < 0)
+            perror("ERROR closing TCP socket\n");
+        free(uPtr);
+    } else {
+        uPtr2 = uPtr -> next;
+        while(uPtr2 != NULL) {
+            if(close(uPtr -> CategoryFD) < 0)
+                perror("ERROR closing TCP socket\n");
+            free(uPtr);
+            uPtr = uPtr2;
+            uPtr2 = uPtr2 -> next;
+        }
+        if(close(uPtr -> CategoryFD) < 0)
+            perror("ERROR closing TCP socket\n");
+        free(uPtr);
+    }
+    printf("Released Categories list allocations\n");
+}
+
+void releaseTCPclients() {
+    tcpClient *aPtr = TCPhead, *aPtr2;
+    if(aPtr -> next = NULL) { // there is only one client
+        if(close(aPtr -> clientFD) < 0)
+            perror("ERROR closing TCP socket\n");
+        free(aPtr);
+    } else {
+        aPtr2 = aPtr -> next;
+        while(aPtr2 != NULL) { // close every client and free
+            if(close(aPtr -> clientFD) < 0)
+                perror("ERROR closing TCP socket\n");
+            free(aPtr);
+            aPtr = aPtr2;
+            aPtr2 = aPtr2 -> next;
+        }
+        free(aPtr);
+    }
+    printf("Released client list\n");
+    for (int i = 0; i < 4; ++i) {
+        IDs[i] = 0;
+    }
+}
+
+void shutdown_and_goodbye() {
+    tcpClient *ptr;
+    ptr = TCPhead;
+    if(TCPhead != NULL) {
+        while(ptr != NULL) {
+            pthread_cancel(ptr -> th);
+            ptr = ptr -> next;
+        }
+        releaseTCPclients();
+        TCPhead = NULL;
+    }
+    if(head != NULL) {
+        releaseUdpNode();
+        head = NULL;
+    }
 }
