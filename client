@@ -1,0 +1,400 @@
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
+#include <sys/types.h>
+#include <sys/select.h>
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
+#include <errno.h>
+#include <netdb.h>
+#include <pthread.h>
+#include <sys/stat.h>
+
+#define BUFF_SIZE 1024
+/*messages we send*/
+#define HELLO 0
+#define INFO 1
+#define ANSWER 2
+#define QUIT 3
+
+/*messages we recive*/
+#define HELLOACK 0
+#define INFOACK 1
+#define QUESTION 2
+#define FIN 3
+#define INVALIDCOMMAND 4
+
+void shutdown_and_goodbye();
+void whoWin(int i);
+
+uint8_t commandType, songNameSize ,age;
+uint16_t reserved, numStations = 0, server_port;
+uint32_t songSize, multicastGroup, temp32;
+//struct for temp data - for displaying data
+struct in_addr temp;
+//UDP Socket and streaming initialing
+int udp_sock, client_socket_fd, changeStation = 0, staNum = 0, qFlag = 1, retE,question_f = 5;
+socklen_t addr_size;
+pthread_t server_th;
+struct sockaddr_in serv_addr;
+
+int main(int argc, char *argv[]) {
+    //declaring variables
+    int port_no, num_parts, byte_no, retVal, threadVal, i, permit, bytesRead;
+    struct ip_mreq mreq;
+    char quesionbuff[BUFF_SIZE];
+    /*ask - askSong sent and not yet answered, permit - permit sent and not yet answered, newFlag - upload finished
+    but newStation not yet received*/
+    int askFlag = 0, permitFlag = 0, newFlag = 0;
+    char buffer[BUFF_SIZE + 1], inbox[BUFF_SIZE + 1], input[10], *songAnnounced, *replyString, recName[201];
+    buffer[BUFF_SIZE] = '\0';
+    char nickname[10];
+    int sizeofnickname ;
+    char buff[3];
+    uint8_t replyStringSize;
+    fd_set fds;
+    FILE *fp;
+    struct sockaddr_in server_addr;
+    struct stat st;
+    int answer;
+    memset(buffer, '\0', BUFF_SIZE);
+    
+    //struct for Timeout in select
+    struct timeval timeout;
+
+    // Read command line arguments, need to get server name(ip) and server port (number)
+    if (argc < 3) {
+        perror("num of arguments is incorrect\n");
+        exit(EXIT_FAILURE);
+    }
+    // Convert the port argv to the appropriate data type
+    port_no = atoi(argv[2]);
+
+    // setup the TCP socket
+    if((client_socket_fd = socket(AF_INET, SOCK_STREAM, 0)) < 0) {
+        perror("ERROR openning socket");
+        exit(EXIT_FAILURE);
+    }
+
+    // clear our the struct server_addr
+    memset((char *) &server_addr, 0, sizeof(server_addr));
+
+    // set up the TCP socket 1
+    server_addr.sin_family = AF_INET;					//IPv4
+    server_addr.sin_port = htons(port_no);				//host to network byte order
+    server_addr.sin_addr.s_addr = inet_addr(argv[1]); 	//turn char to int as needed in the struct
+    memset(server_addr.sin_zero, '\0', sizeof(server_addr.sin_zero));
+
+    // trying to connect to the server (TCP socket)
+    if (connect(client_socket_fd,(struct sockaddr *) &server_addr,sizeof(server_addr)) < 0) {
+        perror("ERROR connecting");
+        exit(EXIT_FAILURE);
+    }
+    printf("Sending Hello\n");
+    //send hello
+    byte_no = 0;
+    reserved = 0;
+    memset(buff, '\0', 3);
+    buff[0] = HELLO;
+    buff[1] = htons(reserved);
+    byte_no = send(client_socket_fd,&buff,sizeof(buff),0);
+    if(byte_no != 3) {
+        printf("ERROR sending Hello\nClosing socket and communication\n");
+        if(close(client_socket_fd) < 0) {
+            perror("ERROR closing TCP socket\n");
+        }
+        exit(EXIT_FAILURE);
+    }
+    //wait for response using select
+    timeout.tv_sec = 0;
+    timeout.tv_usec = 300000;
+
+    /*waiting for Welcome*/
+    FD_ZERO(&fds);
+    FD_SET(client_socket_fd, &fds);
+    retVal = select(FD_SETSIZE, &fds, NULL, NULL, &timeout);
+    if(retVal <= 0 && (errno != EINTR)) {
+        printf("Timeout - didn't received WELCOME\nClosing the communication\n");
+        if(close(client_socket_fd) < 0)
+            perror("ERROR closing TCP socket\n");
+        exit(EXIT_FAILURE);
+    }
+    if((byte_no = read(client_socket_fd, inbox, BUFF_SIZE)) <= 0) {
+        perror("Can not read from socket\nClosing socket and communication\n");
+        if(close(client_socket_fd) < 0)
+            perror("ERROR closing TCP socket\n");
+        exit(EXIT_FAILURE);
+    }
+    commandType = (uint8_t) inbox[0];
+    if(commandType != HELLOACK) {
+        printf("Message type is not Welcome\nClosing socket and communication\n");
+        if(close(client_socket_fd) < 0)
+            perror("ERROR closing TCP socket\n");
+        exit(EXIT_FAILURE);
+    }
+    if(byte_no != 7) {
+        printf("Wrong message format\nClosing socket and communication\n");
+        if(close(client_socket_fd) < 0)
+            perror("ERROR closing TCP socket\n");
+        exit(EXIT_FAILURE);
+    }
+    NICK:
+    memset(buffer, '\0', BUFF_SIZE);
+    printf("Please enter your nickname (no longer then 10 letters):\n");
+    buffer[0] = INFO;
+    scanf("%10s",nickname);
+    sizeofnickname = sizeof(nickname);
+    if(sizeofnickname > 10 )
+    {
+        printf("please try again\n");
+        goto NICK;
+    }
+    printf("Please enter your age (0-99):\n");
+    scanf("%d",&age);
+    buffer[1] = age;
+    buffer[2] = sizeofnickname;
+    memcpy(buffer+3,nickname,sizeofnickname);
+    if((num_parts = send(client_socket_fd, &buffer, 3+sizeofnickname, 0)) != 3+sizeofnickname) {
+        perror("ERROR in sending INFO\n");
+        shutdown_and_goodbye();
+        exit(EXIT_FAILURE);
+    }
+    memset(buffer, '\0', BUFF_SIZE);
+    /*handle welcome*/
+    multicastGroup = htonl(*(((uint32_t*) (&(inbox)[1]))));
+    server_port = htons(*(((uint16_t*) (&(inbox)[5]))));
+    temp.s_addr = multicastGroup;
+    // routine with SERVER
+    printf("Welcome to intTrivia game!!\n");
+    printf("The number of question is: 5 \n multicastGroup is: %s \n serverPort is: %u\n",inet_ntoa(temp),server_port);
+
+    serv_addr.sin_family = AF_INET;
+    serv_addr.sin_port = htons(server_port);
+    serv_addr.sin_addr.s_addr = htonl(INADDR_ANY);
+
+    /*UDP thread - for listening*/
+//    threadVal = pthread_create(&server_th, NULL, listenRadio, NULL);
+//    if(threadVal != 0) {
+//        printf("ERROR opening thread for radioClosing socket and communication\n");
+//        if(close(client_socket_fd) < 0)
+//            perror("ERROR closing TCP socket\n");
+//        return 1;
+//    }
+
+    while(qFlag) {
+        FD_ZERO(&fds);
+        FD_SET(fileno(stdin), &fds);
+        FD_SET(client_socket_fd, &fds);
+        //wait for response using select
+        if(newFlag) {
+            timeout.tv_sec = 2;
+            timeout.tv_usec = 0;
+        } else {
+            timeout.tv_sec = 0;
+            timeout.tv_usec = 300000;
+        }
+        memset(buffer, '\0', BUFF_SIZE);
+        printf("At any time you can type 'q' to quit.\n");
+        if(newFlag)
+            retVal = select(FD_SETSIZE, &fds, NULL, NULL, &timeout);
+        else
+            retVal = select(FD_SETSIZE, &fds, NULL, NULL, NULL);
+        if(retVal <= 0 && (errno != EINTR)) {
+            if(newFlag) {
+                printf("Timeout - new connection\n");
+                shutdown_and_goodbye(); //closing thread & sockets
+            }
+            exit(EXIT_FAILURE);
+        }
+        if(FD_ISSET(fileno(stdin), &fds)) {
+            scanf("%10s",input);
+                switch (input[0]) {
+                    case 'q':
+                        qFlag = 0;
+                        break;
+                    default :
+                        printf("Please enter 'q' to quit\n");
+                }//switch
+            memset(input, '\0', sizeof(input));
+        } // if input - stdin
+        else if(FD_ISSET(client_socket_fd, &fds)) {
+            printf("Got a message from server\n");
+            if((byte_no = read(client_socket_fd, inbox, BUFF_SIZE)) <= 0) {
+                perror("The server closed the connection!\n");
+                shutdown_and_goodbye();
+                exit(EXIT_FAILURE);
+            }
+            commandType = (uint8_t) inbox[0];
+            switch(commandType) {
+                case HELLOACK:
+                    /*we already deal with welcome = received more than one*/
+                    printf("More than one WELCOME received\n");
+                    shutdown_and_goodbye();
+                    exit(EXIT_FAILURE);
+                    break;
+                case INFOACK:
+                    if(byte_no != 2) {
+                        printf("Wrong message format\n");
+                        shutdown_and_goodbye();
+                        exit(EXIT_FAILURE);
+                    }
+                    // open udp socket - listen to the first question via multicast
+                    udp_sock = socket(AF_INET,SOCK_DGRAM,0);
+                    if(udp_sock < 0) {
+                        printf("error in opening udp socket\n");
+                        qFlag = 0;
+                        shutdown_and_goodbye();
+                        exit(EXIT_FAILURE);
+                    }
+                    if(bind(udp_sock,(struct sockaddr*)&serv_addr,sizeof(serv_addr)) != 0) {
+                        perror("UDP bind failed\n");
+                        qFlag = 0;
+                        shutdown_and_goodbye();
+                        exit(EXIT_FAILURE);
+                    }
+                    mreq.imr_multiaddr.s_addr = temp.s_addr;
+                    mreq.imr_interface.s_addr = htonl(INADDR_ANY);
+                
+                    if(setsockopt(udp_sock,IPPROTO_IP,IP_ADD_MEMBERSHIP,&mreq,sizeof(mreq)) != 0) {
+                        perror("ERROR on setsocketopt\n");
+                        qFlag = 0;
+                        shutdown_and_goodbye();
+                        exit(EXIT_FAILURE);
+                    }
+                    if(recvfrom(udp_sock, quesionbuff , BUFF_SIZE, 0, (struct sockaddr*)&serv_addr,
+                                (socklen_t *) sizeof(serv_addr)) < 0)
+                    {
+                        printf("ERROR reading from UDP socket\n");
+                        qFlag = 0;
+                        shutdown_and_goodbye();
+                        exit(EXIT_FAILURE);
+                    }
+                    question_f -- ;
+                    printf("%s\nPlease type your answer:\n",quesionbuff);
+                    scanf("%d",&answer);
+                    buffer[0] = ANSWER;
+                    buffer[1] = sizeof(answer);
+                    memcpy(buffer+2 , answer, sizeof(answer));
+                    if((num_parts = send(client_socket_fd, &buffer, 2+sizeof(answer), 0)) != 2+sizeof(answer)) {
+                        perror("ERROR in sending first ANSWER\n");
+                        shutdown_and_goodbye();
+                        exit(EXIT_FAILURE);
+                    }
+                    break;
+                case QUESTION:
+                    if(question_f > 0)
+                    {
+                        if(recvfrom(udp_sock, quesionbuff , BUFF_SIZE, 0, (struct sockaddr*)&serv_addr,
+                                    (socklen_t *) sizeof(serv_addr)) < 0)
+                        {
+                            printf("ERROR reading from UDP socket\n");
+                            qFlag = 0;
+                            shutdown_and_goodbye();
+                            exit(EXIT_FAILURE);
+                        }
+                        question_f -- ;
+                        printf("%s\nPlease type your answer:\n",quesionbuff);
+                        scanf("%d",&answer);
+                        buffer[0] = ANSWER;
+                        buffer[1] = sizeof(answer);
+                        memcpy(buffer+2 , answer, sizeof(answer));
+                        if((num_parts = send(client_socket_fd, &buffer, 2+sizeof(answer), 0)) != 2+sizeof(answer)) {
+                            perror("ERROR in sending first ANSWER\n");
+                            shutdown_and_goodbye();
+                            exit(EXIT_FAILURE);
+                        }
+                    } else
+                    {
+                        printf("Wrong message type - question have already asked\n");
+                        shutdown_and_goodbye();
+                        exit(EXIT_FAILURE);
+                    }
+                    break;
+                case FIN:
+                    if(byte_no != 2) {
+                        printf("Wrong message format\n");
+                        shutdown_and_goodbye();
+                        return 1;
+                    }
+                    whoWin(inbox[1]);
+                    break;
+                case NEWSTATION:
+                    if(byte_no != 3) {
+                        printf("Wrong message format\n");
+                        shutdown_and_goodbye();
+                        return 1;
+                    }
+                    if(newFlag)
+                        newFlag = 0;
+                    numStations = 0;
+                    numStations = inbox[1]*10 + inbox[2];
+                    printf("There is a NEW STATION!!!!\nNow we have %u stations\n", numStations);
+                    break;
+                default:
+                    printf("Recieved unknown message type from server, closing the communication\n");
+                    if(pthread_cancel(server_th))
+                        printf("ERROR canceling thread\n");
+                    qFlag = 0;
+            }
+            memset(inbox, '\0', sizeof(inbox));
+        }//if msg from server
+    }//while qFlag
+    printf("We are closing the communication!\n");
+    pthread_join(server_th, NULL);
+    // clean up the file descriptors
+    if(close(client_socket_fd) < 0)
+        perror("ERROR closing socket\n");
+    if(close(udp_sock) < 0 )
+        perror("ERROR closing UDP socket\n");
+    printf("Bye Bye!\n");
+    return 0;
+}//main
+
+//void* listenRadio() {
+//    printf("listen radio thread\n");
+//    int song_byte_counter;
+//    char song_data[BUFF_SIZE];
+//    struct ip_mreq mreq;
+//    addr_size = sizeof(radio_addr);
+//    udp_sock = socket(AF_INET,SOCK_DGRAM,0);
+//    if(udp_sock < 0) {
+//        printf("error in opening udp socket\n");
+//        qFlag = 0;
+//        pthread_exit(&retE);   //check ?
+//    }
+//    if(bind(udp_sock,(struct sockaddr*)&radio_addr,sizeof(radio_addr)) != 0) {
+//        perror("UDP bind failed\n");
+//        qFlag = 0;
+//        pthread_exit(&retE);
+//    }
+//    mreq.imr_multiaddr.s_addr = temp.s_addr;
+//    mreq.imr_interface.s_addr = htonl(INADDR_ANY);
+//
+//    if(setsockopt(udp_sock,IPPROTO_IP,IP_ADD_MEMBERSHIP,&mreq,sizeof(mreq)) != 0) {
+//        perror("ERROR on setsocketopt\n");
+//        qFlag = 0;
+//        pthread_exit(&retE);
+//    }
+//    while (qFlag) {
+//        song_byte_counter = recvfrom(udp_sock, song_data, BUFF_SIZE, 0, (struct sockaddr*)&radio_addr, &addr_size);
+//        if(song_byte_counter > 0)
+//            fwrite (song_data , sizeof(char), song_byte_counter, fp);
+//        else {
+//            printf("ERROR reading from UDP socket\n");
+//            qFlag = 0;
+//            pthread_exit(&retE);
+//        }
+//    }
+//    pthread_exit(&retE);
+//}
+
+void shutdown_and_goodbye()
+{
+    return;
+}
+void whoWin(int i)
+{
+    
+}
