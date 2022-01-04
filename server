@@ -12,11 +12,10 @@
 /*	SENDER		*/
 
 #define BUFF_SIZE 1024
-#define TIMETOLIVE 15
 #define CATEGORIES 3
 #define PORTUDP 1234
 #define PORTTCP 12345
-#define MULTICASTG1 "224.61.0.4"
+#define MULTICASTG1 "224.4.0.5"
 #define MULTICASTG2 "224.61.0.5"
 #define MULTICASTG3 "224.61.0.6"
 
@@ -52,6 +51,7 @@ typedef struct tcpClients {
     struct tcpClients *next;
 } tcpClient;
 
+
 void* welcome_func();
 int winnerCalc();
 void scoreCalc();
@@ -70,7 +70,6 @@ uint32_t multiCastG[3], temp32;
 struct sockaddr_in client_addr;
 pthread_mutex_t lock;
 pthread_t welcome_th;
-u_char ttl = TIMETOLIVE;
 char* Q1[] = {"yes?","no?","ok?"};
 char** Q[] = {Q1};
 int* A[] = {0,1,2,3,4};
@@ -78,6 +77,8 @@ int q_now = 0;
 int* answers[4] = {NULL,NULL,NULL,NULL};
 int* score[4] = {0,0,0,0};
 int IDs[4] = {0,0,0,0};
+int i , j ;
+unsigned char ttl = 32;
 
 
 int main() {
@@ -314,7 +315,7 @@ void* TCPManager(void* client) {
                         tcpqFlag = 0;
                         break;
                     }
-                    if(byteCount != 3) {
+                    if(byteCount != 13) {
                         invalid_command(6, cl);
                         tcpqFlag = 0;
                         break;
@@ -322,8 +323,10 @@ void* TCPManager(void* client) {
                     /* age,sizename,name got from the client */
                     cl->clientNickNameSize = inbox[2];
                     cl->clientAge = inbox[1];
-                    memcpy(cl->clientNickName,inbox[3],cl->clientNickNameSize);
-                    for (int j = 0; j < 4; ++j) {
+		    
+		    //cl->clientNickName = (char*)malloc(10);
+                    //memcpy(cl->clientNickName,inbox[3],cl->clientNickNameSize);  //// todo herrreeeee !!! nickname problem !
+                    for (j = 0; j < 4; ++j) {
                         if(IDs[j] == 0)
                         {
                             cl->clientID = j;
@@ -331,17 +334,21 @@ void* TCPManager(void* client) {
                             break;
                         }
                     }
+		    
                     memset(buffer, '\0', BUFF_SIZE);
                     buffer[0] = INFOACK;
                     buffer[1] = cl->clientID;
-                    if((byteCount = send(cl -> clientFD, &buffer, 2 , 0)) != 2 ) {
+		    buffer[2] = 0 ;
+                    if((byteCount = send(cl -> clientFD, &buffer, 3 , 0)) != 3 ) {
                         printf("INFOACK: wrong amount of byte sent\n");
                         removeClinet(cl);
                         tcpqFlag = 0;
                         break;
                     }
+		    
                 RESUME :
-                    while (noOfClients != 4)
+		    
+                    while (noOfClients != 4)	
                     if (noOfClients == 4)
                     {
                         memset(buffer, '\0', BUFF_SIZE);
@@ -349,6 +356,7 @@ void* TCPManager(void* client) {
                         int size0fQ = sizeof(Q1[0]);
                         buffer[1] = size0fQ;
                         memcpy(buffer+2 ,Q1[0],size0fQ);
+	                
                         q_now ++ ;
                         if(sendto(temp->CategoryFD,buffer,2+ size0fQ,0,
                                                (struct sockaddr*) &temp->category,
@@ -360,8 +368,11 @@ void* TCPManager(void* client) {
                                break;
                         }
                     }
+		    printf("%d\n",noOfClients);
+
                     break;
                 case ANSWER:
+			
                         if(helloFlag) {
                             invalid_command(2, cl);
                             tcpqFlag = 0;
@@ -450,7 +461,7 @@ void scoreCalc()
 {
     int min = 3001;
     int temp[4] ;
-    for (int i = 0; i < 4; ++i)
+    for ( i = 0; i < 4; ++i)
     {
         temp[i] = abs(answers[i]-A[q_now]);
         if(min > temp[i])
@@ -458,7 +469,7 @@ void scoreCalc()
             min = temp[i];
         }
     }
-    for (int i = 0; i < 4; ++i)
+    for ( i = 0; i < 4; ++i)
     {
         if(temp[i] == min)
         {
@@ -471,13 +482,13 @@ int winnerCalc()
 {
     int max = -1 ;
     int k = 1 ;
-    for (int i = 0; i < 4; ++i) {
+    for ( i = 0; i < 4; ++i) {
         if(score[i] > max)
         {
             max = score[i];
         }
     }
-    for (int i = 0; i < 4; ++i) {
+    for ( i = 0; i < 4; ++i) {
         k = k << 1;
         if(score[i] == max)
         {
@@ -607,7 +618,7 @@ void releaseTCPclients() {
         free(aPtr);
     }
     printf("Released client list\n");
-    for (int i = 0; i < 4; ++i) {
+    for ( i = 0; i < 4; ++i) {
         IDs[i] = 0;
     }
 }
