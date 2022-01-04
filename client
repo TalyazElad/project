@@ -2,14 +2,11 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
-#include <sys/types.h>
 #include <sys/select.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include <errno.h>
-#include <netdb.h>
-#include <pthread.h>
 #include <sys/stat.h>
 
 #define BUFF_SIZE 1024
@@ -29,24 +26,21 @@
 void shutdown_and_goodbye();
 void whoWin(int i);
 
-uint8_t commandType, songNameSize ,age;
-uint16_t reserved, numStations = 0, server_port;
-uint32_t songSize, multicastGroup, temp32;
-//struct for temp data - for displaying data
+uint8_t commandType,age;
+uint16_t reserved, server_port;
+uint32_t multicastGroup;
 struct in_addr temp;
 //UDP Socket and streaming initialing
-int udp_sock, client_socket_fd, changeStation = 0, staNum = 0, qFlag = 1, retE,question_f = 5;
-socklen_t addr_size;
-pthread_t server_th;
+int udp_sock, client_socket_fd,  qFlag = 1, question_f = 5;
 struct sockaddr_in serv_addr;
 
 int main(int argc, char *argv[]) {
     //declaring variables
-    int port_no, num_parts, byte_no, retVal, threadVal, i, permit, bytesRead;
+    int port_no, num_parts, byte_no, retVal;
     struct ip_mreq mreq;
+    int len;
+    char *str;
     char quesionbuff[BUFF_SIZE];
-    /*ask - askSong sent and not yet answered, permit - permit sent and not yet answered, newFlag - upload finished
-    but newStation not yet received*/
     int askFlag = 0, permitFlag = 0, newFlag = 0;
     char buffer[BUFF_SIZE + 1], inbox[BUFF_SIZE + 1], input[10], *songAnnounced, *replyString, recName[201];
     buffer[BUFF_SIZE] = '\0';
@@ -60,7 +54,7 @@ int main(int argc, char *argv[]) {
     struct stat st;
     int answer;
     memset(buffer, '\0', BUFF_SIZE);
-    
+
     //struct for Timeout in select
     struct timeval timeout;
 
@@ -174,15 +168,6 @@ int main(int argc, char *argv[]) {
     serv_addr.sin_port = htons(server_port);
     serv_addr.sin_addr.s_addr = htonl(INADDR_ANY);
 
-    /*UDP thread - for listening*/
-//    threadVal = pthread_create(&server_th, NULL, listenRadio, NULL);
-//    if(threadVal != 0) {
-//        printf("ERROR opening thread for radioClosing socket and communication\n");
-//        if(close(client_socket_fd) < 0)
-//            perror("ERROR closing TCP socket\n");
-//        return 1;
-//    }
-
     while(qFlag) {
         FD_ZERO(&fds);
         FD_SET(fileno(stdin), &fds);
@@ -192,8 +177,8 @@ int main(int argc, char *argv[]) {
             timeout.tv_sec = 2;
             timeout.tv_usec = 0;
         } else {
-            timeout.tv_sec = 0;
-            timeout.tv_usec = 300000;
+            timeout.tv_sec = 10;
+            timeout.tv_usec = 0;
         }
         memset(buffer, '\0', BUFF_SIZE);
         printf("At any time you can type 'q' to quit.\n");
@@ -210,13 +195,13 @@ int main(int argc, char *argv[]) {
         }
         if(FD_ISSET(fileno(stdin), &fds)) {
             scanf("%10s",input);
-                switch (input[0]) {
-                    case 'q':
-                        qFlag = 0;
-                        break;
-                    default :
-                        printf("Please enter 'q' to quit\n");
-                }//switch
+            switch (input[0]) {
+                case 'q':
+                    qFlag = 0;
+                    break;
+                default :
+                    printf("Please enter 'q' to quit\n");
+            }//switch
             memset(input, '\0', sizeof(input));
         } // if input - stdin
         else if(FD_ISSET(client_socket_fd, &fds)) {
@@ -235,20 +220,20 @@ int main(int argc, char *argv[]) {
                     exit(EXIT_FAILURE);
                     break;
                 case INFOACK:
-                    if(byte_no != 2) {
+                    if (byte_no != 3) {
                         printf("Wrong message format\n");
                         shutdown_and_goodbye();
                         exit(EXIT_FAILURE);
                     }
                     // open udp socket - listen to the first question via multicast
-                    udp_sock = socket(AF_INET,SOCK_DGRAM,0);
-                    if(udp_sock < 0) {
+                    udp_sock = socket(AF_INET, SOCK_DGRAM, 0);
+                    if (udp_sock < 0) {
                         printf("error in opening udp socket\n");
                         qFlag = 0;
                         shutdown_and_goodbye();
                         exit(EXIT_FAILURE);
                     }
-                    if(bind(udp_sock,(struct sockaddr*)&serv_addr,sizeof(serv_addr)) != 0) {
+                    if (bind(udp_sock, (struct sockaddr *) &serv_addr, sizeof(serv_addr)) != 0) {
                         perror("UDP bind failed\n");
                         qFlag = 0;
                         shutdown_and_goodbye();
@@ -256,145 +241,141 @@ int main(int argc, char *argv[]) {
                     }
                     mreq.imr_multiaddr.s_addr = temp.s_addr;
                     mreq.imr_interface.s_addr = htonl(INADDR_ANY);
-                
-                    if(setsockopt(udp_sock,IPPROTO_IP,IP_ADD_MEMBERSHIP,&mreq,sizeof(mreq)) != 0) {
+
+                    if (setsockopt(udp_sock, IPPROTO_IP, IP_ADD_MEMBERSHIP, &mreq, sizeof(mreq)) != 0) {
                         perror("ERROR on setsocketopt\n");
                         qFlag = 0;
                         shutdown_and_goodbye();
                         exit(EXIT_FAILURE);
                     }
-                    if(recvfrom(udp_sock, quesionbuff , BUFF_SIZE, 0, (struct sockaddr*)&serv_addr,
-                                (socklen_t *) sizeof(serv_addr)) < 0)
-                    {
+                RESUME:
+                    if (recvfrom(udp_sock, quesionbuff, BUFF_SIZE, 0, (struct sockaddr *) &serv_addr,
+                                (socklen_t *) sizeof(serv_addr)) < 0) {
                         printf("ERROR reading from UDP socket\n");
                         qFlag = 0;
                         shutdown_and_goodbye();
                         exit(EXIT_FAILURE);
                     }
-                    question_f -- ;
-                    printf("%s\nPlease type your answer:\n",quesionbuff);
-                    scanf("%d",&answer);
+                    question_f--;
+                    printf("%s\nPlease type your answer:\n", quesionbuff);
+                    scanf("%d", &answer);
                     buffer[0] = ANSWER;
                     buffer[1] = sizeof(answer);
-                    memcpy(buffer+2 , answer, sizeof(answer));
-                    if((num_parts = send(client_socket_fd, &buffer, 2+sizeof(answer), 0)) != 2+sizeof(answer)) {
+                    memcpy(buffer + 2, answer, sizeof(answer));
+                    if ((num_parts = send(client_socket_fd, &buffer, 2 + sizeof(answer), 0)) != 2 + sizeof(answer)) {
                         perror("ERROR in sending first ANSWER\n");
                         shutdown_and_goodbye();
                         exit(EXIT_FAILURE);
                     }
                     break;
                 case QUESTION:
-                    if(question_f > 0)
-                    {
-                        if(recvfrom(udp_sock, quesionbuff , BUFF_SIZE, 0, (struct sockaddr*)&serv_addr,
-                                    (socklen_t *) sizeof(serv_addr)) < 0)
-                        {
+                    if (question_f > 0) {
+                        if (recvfrom(udp_sock, quesionbuff, BUFF_SIZE, 0, (struct sockaddr *) &serv_addr,
+                                     (socklen_t *) sizeof(serv_addr)) < 0) {
                             printf("ERROR reading from UDP socket\n");
                             qFlag = 0;
                             shutdown_and_goodbye();
                             exit(EXIT_FAILURE);
                         }
-                        question_f -- ;
-                        printf("%s\nPlease type your answer:\n",quesionbuff);
-                        scanf("%d",&answer);
+                        question_f--;
+                        printf("%s\nPlease type your answer:\n", quesionbuff);
+                        scanf("%d", &answer);
                         buffer[0] = ANSWER;
                         buffer[1] = sizeof(answer);
-                        memcpy(buffer+2 , answer, sizeof(answer));
-                        if((num_parts = send(client_socket_fd, &buffer, 2+sizeof(answer), 0)) != 2+sizeof(answer)) {
+                        memcpy(buffer + 2, answer, sizeof(answer));
+                        if ((num_parts = send(client_socket_fd, &buffer, 2 + sizeof(answer), 0)) !=
+                            2 + sizeof(answer)) {
                             perror("ERROR in sending first ANSWER\n");
                             shutdown_and_goodbye();
                             exit(EXIT_FAILURE);
                         }
-                    } else
-                    {
+                    } else {
                         printf("Wrong message type - question have already asked\n");
                         shutdown_and_goodbye();
                         exit(EXIT_FAILURE);
                     }
                     break;
                 case FIN:
-                    if(byte_no != 2) {
+                    if (byte_no != 2) {
                         printf("Wrong message format\n");
                         shutdown_and_goodbye();
                         return 1;
                     }
                     whoWin(inbox[1]);
-                    break;
-                case NEWSTATION:
-                    if(byte_no != 3) {
-                        printf("Wrong message format\n");
+                YESNO:
+                    printf("Do you want to keep playing (Y/N)?\n");
+                    char yesno;
+                    scanf("%c", yesno);
+                    buffer[0] = QUIT;
+                    if (yesno == 'Y' || yesno == 'y') {
+                        buffer[1] = 1;
+                        if ((num_parts = send(client_socket_fd, &buffer, 2, 0)) != 2) {
+                            perror("ERROR in sending first ANSWER\n");
+                            shutdown_and_goodbye();
+                            exit(EXIT_FAILURE);
+                        }
+                        goto RESUME;
+                    } else if (yesno == 'N' || yesno == 'n') {
+                        buffer[1] = 0;
+                        if ((num_parts = send(client_socket_fd, &buffer, 2, 0)) != 2) {
+                            perror("ERROR in sending first ANSWER\n");
+                            shutdown_and_goodbye();
+                            exit(EXIT_FAILURE);
+                        }
+                        printf("Bye Bye");
                         shutdown_and_goodbye();
-                        return 1;
+                        return 0;
+                    } else {
+                        printf("please type only (Y/N)\n");
+                        goto YESNO;
                     }
-                    if(newFlag)
-                        newFlag = 0;
-                    numStations = 0;
-                    numStations = inbox[1]*10 + inbox[2];
-                    printf("There is a NEW STATION!!!!\nNow we have %u stations\n", numStations);
                     break;
-                default:
-                    printf("Recieved unknown message type from server, closing the communication\n");
-                    if(pthread_cancel(server_th))
-                        printf("ERROR canceling thread\n");
-                    qFlag = 0;
+                case INVALIDCOMMAND:
+                    len = inbox[1];
+                    str = (char *) malloc(len + 1);
+                    if (!str) {
+                        perror("malloc fail\n");
+                        shutdown_and_goodbye();
+                        exit(EXIT_FAILURE);
+                    }
+                    memcpy(str, inbox +2 , len +1 );
+                    printf("%s\n", str);
+                    shutdown_and_goodbye();
+                    exit(EXIT_FAILURE);
+                    break;
             }
             memset(inbox, '\0', sizeof(inbox));
         }//if msg from server
     }//while qFlag
-    printf("We are closing the communication!\n");
-    pthread_join(server_th, NULL);
-    // clean up the file descriptors
-    if(close(client_socket_fd) < 0)
-        perror("ERROR closing socket\n");
-    if(close(udp_sock) < 0 )
-        perror("ERROR closing UDP socket\n");
-    printf("Bye Bye!\n");
+    shutdown_and_goodbye();
     return 0;
 }//main
 
-//void* listenRadio() {
-//    printf("listen radio thread\n");
-//    int song_byte_counter;
-//    char song_data[BUFF_SIZE];
-//    struct ip_mreq mreq;
-//    addr_size = sizeof(radio_addr);
-//    udp_sock = socket(AF_INET,SOCK_DGRAM,0);
-//    if(udp_sock < 0) {
-//        printf("error in opening udp socket\n");
-//        qFlag = 0;
-//        pthread_exit(&retE);   //check ?
-//    }
-//    if(bind(udp_sock,(struct sockaddr*)&radio_addr,sizeof(radio_addr)) != 0) {
-//        perror("UDP bind failed\n");
-//        qFlag = 0;
-//        pthread_exit(&retE);
-//    }
-//    mreq.imr_multiaddr.s_addr = temp.s_addr;
-//    mreq.imr_interface.s_addr = htonl(INADDR_ANY);
-//
-//    if(setsockopt(udp_sock,IPPROTO_IP,IP_ADD_MEMBERSHIP,&mreq,sizeof(mreq)) != 0) {
-//        perror("ERROR on setsocketopt\n");
-//        qFlag = 0;
-//        pthread_exit(&retE);
-//    }
-//    while (qFlag) {
-//        song_byte_counter = recvfrom(udp_sock, song_data, BUFF_SIZE, 0, (struct sockaddr*)&radio_addr, &addr_size);
-//        if(song_byte_counter > 0)
-//            fwrite (song_data , sizeof(char), song_byte_counter, fp);
-//        else {
-//            printf("ERROR reading from UDP socket\n");
-//            qFlag = 0;
-//            pthread_exit(&retE);
-//        }
-//    }
-//    pthread_exit(&retE);
-//}
-
 void shutdown_and_goodbye()
 {
-    return;
+    if(close(client_socket_fd) < 0)
+        perror("ERROR closing TCP socket");
+    if(close(udp_sock) < 0 )
+        perror("ERROR closing UDP socket");
+    printf("closed communication, bye\n");
 }
+
 void whoWin(int i)
 {
-    
+    int arr[4] = {0,0,0,0};
+    int j ;
+    if(i==17 ||i==18 ||i==20 ||i==24)
+    {
+        printf("the winner is:\n");
+    }
+    else
+        printf("the winners are:\n");
+    for (j = 3; j >-1 ; --j) {
+        if(i%2 == 1)
+        {
+            arr[j] = 1 ;
+            printf("id %d\n",j);
+        }
+        i = i >> 1 ;
+    }
 }
