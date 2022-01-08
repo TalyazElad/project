@@ -45,7 +45,7 @@ typedef struct tcpClients {
     int clientFD;
     int clientID;
     int clientAge;
-    char clientNickName;
+    char* clientNickName;
     int clientNickNameSize;
     pthread_t th;
     struct sockaddr_in client;
@@ -82,6 +82,7 @@ int IDs[4] = {0,0,0,0};
 int i , j ;
 unsigned char ttl = 32;
 uint16_t calc = 0 ;
+char *stra;
 
 
 int main() {
@@ -324,11 +325,13 @@ void* TCPManager(void* client) {
                         break;
                     }
                     /* age,sizename,name got from the client */
-                    cl->clientNickNameSize = inbox[2];
+
                     cl->clientAge = inbox[1];
-		    
-		    //cl->clientNickName = (char*)malloc(10);
-                    //memcpy(cl->clientNickName,inbox[3],cl->clientNickNameSize);  //// todo herrreeeee !!! nickname problem !
+                    int lenth = inbox[2];
+                    cl->clientNickNameSize = lenth;
+					stra = (char *) malloc(lenth + 1);
+					memcpy(stra, inbox +3 , lenth + 1 );  //// todo herrreeeee !!! nickname problem !
+					cl->clientNickName = stra;
                     for (j = 0; j < 4; ++j) {
                         if(IDs[j] == 0)
                         {
@@ -337,7 +340,7 @@ void* TCPManager(void* client) {
                             break;
                         }
                     }
-		    
+                    printf("the name and the age of user id:%d are %s %d\n",cl->clientID,cl->clientNickName,cl->clientAge);
                     memset(buffer, '\0', BUFF_SIZE);
                     buffer[0] = INFOACK;
                     buffer[1] = cl->clientID;
@@ -374,17 +377,12 @@ void* TCPManager(void* client) {
 						printf("%d\n",noOfClients);
 						break;
                 case ANSWER:
-                		
+
                         if(helloFlag) {
                             invalid_command(2, cl);
                             tcpqFlag = 0;
                             break;
                         }
-//                        if(byteCount != 6) {
-//                            invalid_command(6, cl);
-//                            tcpqFlag = 0;
-//                            break;
-//                        }
                         temp_all_answers ++ ;
                         size0fanswer = inbox[1];
                         printf("temp_all_answers: %d\n",temp_all_answers);
@@ -400,7 +398,7 @@ void* TCPManager(void* client) {
                         // todo wait some time for the data to calculate ? to all the clients
                         printf("here we before fall after scoreCalc() \n");
                         //while(temp_all_answers !=4);
-                        
+
                         if(temp_all_answers == 4){
                         	temp_all_answers = 0 ;
                         	flag_send = 1 ;
@@ -409,7 +407,7 @@ void* TCPManager(void* client) {
                         printf("here we fall after scoreCalc() \n");
                         // send another question
                         if(q_now < 5 && flag_send == 1)
-                        {	
+                        {
                         	flag_send = 0 ;
                             memset(buffer, '\0', BUFF_SIZE);
                             buffer[0] = QUESTION;
@@ -442,7 +440,7 @@ void* TCPManager(void* client) {
                                       (struct sockaddr*) &temp->category,
                                       sizeof(temp->category))
                             ***/
-                            
+
                             //if(cl->clientID == 0){
                             	int winneris = winnerCalc();
 								buffer[1] = winneris ;
@@ -533,6 +531,7 @@ int winnerCalc()
 
 void removeClinet(tcpClient* del)
 {
+	printf("client id:%d been removed\n",del->clientID);
     pthread_mutex_lock(&lock);
     Ttemp = TCPhead;
     IDs[del->clientID] = 0 ;
@@ -564,6 +563,7 @@ void removeClinet(tcpClient* del)
     }//else
     pthread_mutex_unlock(&lock);
 
+
 }
 
 void invalid_command(int type , tcpClient *client)
@@ -592,6 +592,11 @@ void invalid_command(int type , tcpClient *client)
             len = strlen(str);
             buffer[1] = len;
             break;
+        case 4:
+			str = "The server closed the connection";
+			len = strlen(str);
+			buffer[1] = len;
+			break;
         case 5:
             printf("Unknown command received\n");
             str = "Unknown command received";
@@ -607,8 +612,8 @@ void invalid_command(int type , tcpClient *client)
     }//switch
     memcpy(buffer + 2, str, len);
     if((byteCount = send(client -> clientFD, &buffer, 2 + len, 0)) < 0)
-        printf("ERROR sending invalid message\n");
-    removeClinet(client);
+        perror("ERROR sending invalid message\n");
+    if(type != 4){removeClinet(client);}
 }
 
 void releaseUdpNode() {
@@ -645,10 +650,12 @@ void releaseTCPclients() {
             if(close(aPtr -> clientFD) < 0)
                 perror("ERROR closing TCP socket\n");
             free(aPtr);
+            free(aPtr->clientNickName);
             aPtr = aPtr2;
             aPtr2 = aPtr2 -> next;
         }
         free(aPtr);
+        free(aPtr->clientNickName);
     }
     printf("Released client list\n");
     for ( i = 0; i < 4; ++i) {
