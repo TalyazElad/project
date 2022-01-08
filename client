@@ -25,7 +25,7 @@
 #define INVALIDCOMMAND 4
 
 void shutdown_and_goodbye();
-void whoWin(uint8_t i);
+void whoWin(int i);
 
 uint8_t commandType,age;
 uint16_t reserved, server_port;
@@ -112,7 +112,7 @@ int main(int argc, char *argv[]) {
     FD_SET(client_socket_fd, &fds);
     retVal = select(FD_SETSIZE, &fds, NULL, NULL, &timeout);
     if(retVal <= 0 && (errno != EINTR)) {
-        printf("Timeout - didn't received WELCOME\nClosing the communication\n");
+        perror("Timeout - didn't received WELCOME\nClosing the communication\n");
         if(close(client_socket_fd) < 0)
             perror("ERROR closing TCP socket\n");
         exit(EXIT_FAILURE);
@@ -125,13 +125,13 @@ int main(int argc, char *argv[]) {
     }
     commandType = (uint8_t) inbox[0];
     if(commandType != HELLOACK) {
-        printf("Message type is not Welcome\nClosing socket and communication\n");
+    	perror("Message type is not Welcome\nClosing socket and communication\n");
         if(close(client_socket_fd) < 0)
             perror("ERROR closing TCP socket\n");
         exit(EXIT_FAILURE);
     }
     if(byte_no != 7) {
-        printf("Wrong message format\nClosing socket and communication\n");
+    	perror("Wrong message format\nClosing socket and communication\n");
         if(close(client_socket_fd) < 0)
             perror("ERROR closing TCP socket\n");
         exit(EXIT_FAILURE);
@@ -216,16 +216,16 @@ int main(int argc, char *argv[]) {
    
 
     while(qFlag) {
-	FD_ZERO(&fds);
-	FD_SET(client_socket_fd,&fds);
-	FD_SET(udp_sock, &fds);
-	FD_SET(fileno(stdin), &fds);
+		FD_ZERO(&fds);
+		FD_SET(client_socket_fd,&fds);
+		FD_SET(udp_sock, &fds);
+		FD_SET(fileno(stdin), &fds);
         //wait for response using select
         if(newFlag) {
             timeout.tv_sec = 2;
             timeout.tv_usec = 0;
         } else {
-            timeout.tv_sec = 10;
+            timeout.tv_sec = 15;
             timeout.tv_usec = 0;
         }
         memset(buffer, '\0', BUFF_SIZE);
@@ -263,73 +263,113 @@ int main(int argc, char *argv[]) {
             }
         commandType = (uint8_t) quesionbuff[0];
       switch(commandType) {
-			case QUESTION:
-			   printf("arrive Question case!\n");
-			   if (question_f > 0) {
-					question_f--;
-					len = quesionbuff[1];
-					str = (char *) malloc(len + 1);
-					memcpy(str, quesionbuff +2 , len + 1 );
-					printf("%s\n", str);
-					printf("type your answer:\n");
-					scanf("%s", answer);
-					buffer[0] = ANSWER;
-					buffer[1] = strlen(answer);
-					memcpy(buffer + 2, answer, strlen(answer));
-					if ((num_parts = send(client_socket_fd, &buffer, 2 + strlen(answer), 0)) != (2 + strlen(answer))) {
-					   perror("ERROR in sending first ANSWER\n");
-					   shutdown_and_goodbye();
-					   exit(EXIT_FAILURE);
-					}
-				} else {
+case QUESTION:
+   printf("arrive Question case!\n");
+   if (question_f > 0) {
+	    timeout.tv_sec = 15;
+	    timeout.tv_usec = 0;
+	    FD_ZERO(&fds);
+		FD_SET(fileno(stdin), &fds);
+		question_f--;
+		len = quesionbuff[1];
+		str = (char *) malloc(len + 1);
+		memcpy(str, quesionbuff +2 , len + 1 );
+		printf("%s\n", str);
+		printf("type your answer:\n");
+		retVal = select(FD_SETSIZE, &fds, NULL, NULL, &timeout);
+		if (retVal == 0)
+		{
+			printf("Timeout - gain 0 points\n");
+			buffer[0] = ANSWER;
+			answer[0]= 'ff';
+			answer[1]= 'ff';
+			answer[2]= 'ff';
+			answer[3]= 'ff';
+			buffer[1] = strlen(answer);
+			memcpy(buffer + 2, answer, strlen(answer));
+			if ((num_parts = send(client_socket_fd, &buffer, 2 + strlen(answer), 0)) != (2 + strlen(answer))) {
+			   perror("ERROR in sending first ANSWER\n");
+			   shutdown_and_goodbye();
+			   exit(EXIT_FAILURE);
+			}
+			break;
+		}
+		if(FD_ISSET(fileno(stdin), &fds))
+		{
+			scanf("%s", answer);
+			buffer[0] = ANSWER;
+			buffer[1] = strlen(answer);
+			memcpy(buffer + 2, answer, strlen(answer));
+			if ((num_parts = send(client_socket_fd, &buffer, 2 + strlen(answer), 0)) != (2 + strlen(answer))) {
+			   perror("ERROR in sending first ANSWER\n");
+			   shutdown_and_goodbye();
+			   exit(EXIT_FAILURE);
+				}
+			}
+
+		} else {
 				perror("Wrong message type - question have already asked\n");
 				shutdown_and_goodbye();
 				exit(EXIT_FAILURE);
-				   }
-				   break;
-			case FIN:
+		   }
+		   break;
+	case FIN:
                     if (byte_no != 2) {
                         perror("Wrong message format\n");
                         shutdown_and_goodbye();
                         return 1;
                     }
-//                    printf(" whoWin(inbox[1]):%d\n",quesionbuff[1]);
-//                    printf(" whoWin((uint8_t )inbox[1]):%d\n",(uint8_t )quesionbuff[1]);
+                    FD_ZERO(&fds);
+					FD_SET(fileno(stdin), &fds);
                     whoWin((uint8_t )quesionbuff[1]);
-//                YESNO:
-                    printf("Do you want to keep playing (Y/N)?\n");
-                    char* yesno;
-                    scanf("%1s", &yesno);
-                    printf("yesno :%c\n",yesno);
-                    
-                    if (yesno == 'Y' || yesno == 'y') {
-                    	buffer[0] = FIRSTQ;
-                        buffer[1] = 0;
-                        buffer[2] = 0;
-                        question_f = 5 ;
-                        if ((num_parts = send(client_socket_fd, &buffer, 3, 0)) != 3) {
-                            perror("ERROR in sending first ANSWER\n");
-                            shutdown_and_goodbye();
-                            exit(EXIT_FAILURE);
-                        }
+					  printf("Do you want to keep playing (Y/N)?\n");
+					  char* yesno;
+				    retVal = select(FD_SETSIZE, &fds, NULL, NULL, &timeout);
+					if (retVal == 0)
+					{
+						buffer[0] = QUIT;
+						buffer[1] = 0;
+						if ((num_parts = send(client_socket_fd, &buffer, 2, 0)) != 2) {
+							perror("ERROR in sending first ANSWER\n");
+							shutdown_and_goodbye();
+							exit(EXIT_FAILURE);
+						}
+						printf("Bye Bye");
+						shutdown_and_goodbye();
+						return 0;
+					}
+					if(FD_ISSET(fileno(stdin), &fds)){
+					  scanf("%1s", &yesno);
+					  printf("yesno :%c\n",yesno);
+					  if (yesno == 'Y' || yesno == 'y') {
+						buffer[0] = FIRSTQ;
+						buffer[1] = 0;
+						buffer[2] = 0;
+						question_f = 5 ;
+						if ((num_parts = send(client_socket_fd, &buffer, 3, 0)) != 3) {
+							perror("ERROR in sending first ANSWER\n");
+							shutdown_and_goodbye();
+							exit(EXIT_FAILURE);
+						}
                         //goto RESUME;
-                    } else if (yesno == 'N' || yesno == 'n') {
-                    	buffer[0] = QUIT;
-                        buffer[1] = 0;
-                        if ((num_parts = send(client_socket_fd, &buffer, 2, 0)) != 2) {
-                            perror("ERROR in sending first ANSWER\n");
-                            shutdown_and_goodbye();
-                            exit(EXIT_FAILURE);
-                        }
-                        printf("Bye Bye");
-                        shutdown_and_goodbye();
-                        return 0;
+					  } else if (yesno == 'N' || yesno == 'n') {
+							buffer[0] = QUIT;
+							buffer[1] = 0;
+							if ((num_parts = send(client_socket_fd, &buffer, 2, 0)) != 2) {
+								perror("ERROR in sending first ANSWER\n");
+								shutdown_and_goodbye();
+								exit(EXIT_FAILURE);
+							}
+							printf("Bye Bye");
+							shutdown_and_goodbye();
+							return 0;
                     } else {
                         printf("please type only (Y/N)\n");
-//                        goto YESNO;
                     }
                     break;
+					}
 	}
+
 }
         else if(FD_ISSET(client_socket_fd, &fds)) {
             printf("Got a message from server\n");
@@ -416,7 +456,7 @@ void shutdown_and_goodbye()
     printf("closed communication, bye\n");
 }
 
-void whoWin(uint8_t i)
+void whoWin(int i)
 {
     int arr[4] = {0,0,0,0};
     int j ;
@@ -425,7 +465,7 @@ void whoWin(uint8_t i)
         printf("the winner is:\n");
     }
     else
-        {printf("the winners are:\n");}
+        printf("the winners are:\n");
     for (j = 3; j >-1 ; --j) {
         if(i%2 == 1)
         {
