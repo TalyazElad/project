@@ -11,6 +11,7 @@
 
 #define BUFF_SIZE 1024
 #define SERVER_IP "192.4.5.1"
+
 /*messages we send*/
 #define HELLO 0
 #define INFO 1
@@ -25,19 +26,24 @@
 #define FIN 3
 #define INVALIDCOMMAND 4
 
+/*side function*/
 void shutdown_and_goodbye();
 void whoWin(int i);
 
+/*global variables*/
 uint8_t commandType,age;
 uint16_t reserved, server_port;
 uint32_t multicastGroup;
-int yes = 1 ;
+int yes = 1 , my_cat = 0;
 struct in_addr temp;
-//UDP Socket and streaming initialing
+
+/*UDP Socket and TCP*/
 int udp_sock, client_socket_fd,  qFlag = 1, question_f = 5;
+int ports[3]={6000,6001,6002};
 struct sockaddr_in serv_addr;
 
 int main(int argc, char *argv[]) {
+
     //declaring variables
     int port_no, num_parts, byte_no, retVal;
     int flag_c = 1 ;
@@ -45,7 +51,7 @@ int main(int argc, char *argv[]) {
     int len , maxfdp1;
     char *str;
     char quesionbuff[BUFF_SIZE + 1];
-    int askFlag = 0, permitFlag = 0, newFlag = 0;
+    int askFlag = 0, permitFlag = 0, newFlag = 0 ,catagory_no = 0;
     char buffer[BUFF_SIZE + 1], inbox[BUFF_SIZE + 1], input[10], *songAnnounced, *replyString, recName[201], answer[4];
     buffer[BUFF_SIZE] = '\0';
     char nickname[10];
@@ -53,35 +59,33 @@ int main(int argc, char *argv[]) {
     char buff[3];
     uint8_t replyStringSize;
     fd_set fds , fdu;
-    FILE *fp;
     struct sockaddr_in server_addr;
     struct stat st;
     memset(buffer, '\0', BUFF_SIZE);
 
-    //struct for Timeout in select
+    //struct for Timeout
     struct timeval timeout;
 
-    // Read command line arguments, need to get server name(ip) and server port (number)
+    // read command line arguments
     if (argc != 2) {
-        perror("num of arguments is incorrect\n");
+        perror("Num of Arguments is Incorrect\n");
         exit(EXIT_FAILURE);
     }
-    // Convert the port argv to the appropriate data type
+    //convert the port argv
     port_no = atoi(argv[1]);
 
-
-    // setup the TCP socket
+    //setup the TCP socket
     if((client_socket_fd = socket(AF_INET, SOCK_STREAM, 0)) < 0) {
         perror("ERROR openning socket");
         exit(EXIT_FAILURE);
     }
 
-    // clear our the struct server_addr
+    //clear our the struct server_addr
     memset((char *) &server_addr, 0, sizeof(server_addr));
 
     // set up the TCP socket 1
     server_addr.sin_family = AF_INET; //IPv4
-    server_addr.sin_port = htons(port_no); //host to network byte order
+    server_addr.sin_port = htons(port_no);   //host to network byte order
     server_addr.sin_addr.s_addr = inet_addr(SERVER_IP); //turn char to int as needed in the struct
     memset(server_addr.sin_zero, '\0', sizeof(server_addr.sin_zero));
 
@@ -97,7 +101,18 @@ int main(int argc, char *argv[]) {
     memset(buff, '\0', 3);
     buff[0] = HELLO;
     buff[1] = htons(reserved);
+    printf("Choose Catagory :\n1.Sports\n2.Songs\n3.Math\n");
+    scanf("%d",&catagory_no);
+    if(catagory_no >3 || catagory_no<1)
+    {
+    	printf("Catagory number don't exist, Please connect again\n");
+    	shutdown_and_goodbye();
+    	exit(EXIT_FAILURE);
+    }
+
+    buff[2]=catagory_no;
     byte_no = send(client_socket_fd,&buff,sizeof(buff),0);
+
     if(byte_no != 3) {
         printf("ERROR sending Hello\nClosing socket and communication\n");
         if(close(client_socket_fd) < 0) {
@@ -105,13 +120,15 @@ int main(int argc, char *argv[]) {
         }
         exit(EXIT_FAILURE);
     }
-    //wait for response using select
+
+    //set the timeout
     timeout.tv_sec = 0;
     timeout.tv_usec = 300000;
 
-    /*waiting for Welcome*/
+    //set for select
     FD_ZERO(&fds);
     FD_SET(client_socket_fd, &fds);
+
     retVal = select(FD_SETSIZE, &fds, NULL, NULL, &timeout);
     if(retVal <= 0 && (errno != EINTR)) {
         perror("Timeout - didn't received WELCOME\nClosing the communication\n");
@@ -125,6 +142,7 @@ int main(int argc, char *argv[]) {
             perror("ERROR closing TCP socket\n");
         exit(EXIT_FAILURE);
     }
+
     commandType = (uint8_t) inbox[0];
     if(commandType != HELLOACK) {
     	perror("Message type is not Welcome\nClosing socket and communication\n");
@@ -138,36 +156,59 @@ int main(int argc, char *argv[]) {
             perror("ERROR closing TCP socket\n");
         exit(EXIT_FAILURE);
     }
-    NICK:
     memset(buffer, '\0', BUFF_SIZE);
+
+    //enter detail of registration - nickname and age
     printf("Please enter your nickname (no longer then 10 letters):\n");
-    buffer[0] = INFO;
     scanf("%s",nickname);
     sizeofnickname = sizeof(nickname);
-//    printf("sizeofnickname: %d\n",sizeofnickname); /////////// todo take care of tht
-//    if(sizeofnickname > 10 )
-//    {
-//        printf("please try again, you have entered more than 10 letters\n");
-//        goto NICK;
-//    }
+    if(sizeofnickname>10)
+    {
+    	printf("Nickname too long, please try again (no longer then 10 letters):\n");
+    	scanf("%s",nickname);
+    	sizeofnickname = sizeof(nickname);
+    	if(sizeofnickname>10)
+    	{
+    		perror("Invalid Nickname\n");
+    		shutdown_and_goodbye();
+    		exit(EXIT_FAILURE);
+    	}
+    }
+
+    buffer[0] = INFO;
     printf("Please enter your age (0-99):\n");
     scanf("%d",&age);
-    buffer[1] = age;
-    buffer[2] = sizeofnickname;
-    memcpy(buffer+3,nickname,sizeofnickname);
-    if((num_parts = send(client_socket_fd, &buffer, 3+sizeofnickname, 0)) != 3+sizeofnickname) {
+    if(age<0 || age>99)
+    {
+    	printf("Invalid Age, enter your age (0-99):\n");
+    	scanf("%d",&age);
+    	if(age<0 || age>99)
+    	{
+    		perror("invalid age\n");
+    		shutdown_and_goodbye();
+    		exit(EXIT_FAILURE);
+    	}
+    }
+    buffer[1] = catagory_no;
+    buffer[2] = age;
+    buffer[3] = sizeofnickname;
+    memcpy(buffer+4,nickname,sizeofnickname);
+
+    if((num_parts = send(client_socket_fd, &buffer, 4+sizeofnickname, 0)) != 4+sizeofnickname) {
         perror("ERROR in sending INFO\n");
         shutdown_and_goodbye();
         exit(EXIT_FAILURE);
     }
     memset(buffer, '\0', BUFF_SIZE);
-    /*handle welcome*/
+
+    //handle welcome
     multicastGroup = htonl(*(((uint32_t*) (&(inbox)[1]))));
     server_port = htons(*(((uint16_t*) (&(inbox)[5]))));
     temp.s_addr = multicastGroup;
+
     // routine with SERVER
-    printf("Welcome to intTrivia game!!\n");
-    printf("The number of question is: 5 \n multicastGroup is: %s \n serverPort is: %u\n",inet_ntoa(temp),server_port);
+    printf("\n********************************\n* Welcome to intTrivia Game!!! *\n********************************\n\n");
+    printf("The number of question are: 5\nMulticastGroup is: %s\nServerPort is: %u\n",inet_ntoa(temp),server_port);
 
     serv_addr.sin_family = AF_INET;
     serv_addr.sin_port = server_port;
@@ -175,18 +216,15 @@ int main(int argc, char *argv[]) {
 
 	udp_sock = socket(AF_INET, SOCK_DGRAM, 0);
 	if (udp_sock < 0) {
-	printf("error in opening udp socket\n");
+	printf("ERROR in opening udp socket\n");
 	qFlag = 0;
 	shutdown_and_goodbye();
 	exit(EXIT_FAILURE);
 	}
 	FD_SET(udp_sock,&fds);
 	u_int yes = 1;
-	if (
-	setsockopt(
-	udp_sock, SOL_SOCKET, SO_REUSEADDR, (char*) &yes, sizeof(yes)
-	) < 0
-	){
+	if (setsockopt(udp_sock, SOL_SOCKET, SO_REUSEADDR, (char*) &yes, sizeof(yes)) < 0)
+	{
 	  perror("Reusing ADDR failed");
 	  return 1;
 	}
@@ -194,7 +232,7 @@ int main(int argc, char *argv[]) {
 	memset(&addr, 0, sizeof(addr));
 	addr.sin_family = AF_INET;
 	addr.sin_addr.s_addr = htonl(INADDR_ANY); // differs from sender
-	addr.sin_port = htons(6000);
+	addr.sin_port = htons(ports[catagory_no-1]);
 
 	printf("open udp sock\n");
 	if (bind(udp_sock, (struct sockaddr *) &addr, sizeof(addr)) != 0) {
@@ -205,7 +243,7 @@ int main(int argc, char *argv[]) {
 	}
 
 	printf("bind udp sock\n");
-	mreq.imr_multiaddr.s_addr = inet_addr("224.4.0.5");
+	mreq.imr_multiaddr.s_addr = multicastGroup;
 	mreq.imr_interface.s_addr = htonl(INADDR_ANY);
 
 	if (setsockopt(udp_sock, IPPROTO_IP, IP_ADD_MEMBERSHIP, &mreq, sizeof(mreq)) != 0) {
@@ -284,13 +322,14 @@ case QUESTION:
 		{
 			printf("Timeout - gain 0 points\n");
 			buffer[0] = ANSWER;
+			buffer[1] = catagory_no;
 			answer[0]= 'ff';
 			answer[1]= 'ff';
 			answer[2]= 'ff';
 			answer[3]= 'ff';
-			buffer[1] = strlen(answer);
-			memcpy(buffer + 2, answer, strlen(answer));
-			if ((num_parts = send(client_socket_fd, &buffer, 2 + strlen(answer), 0)) != (2 + strlen(answer))) {
+			buffer[2] = strlen(answer);
+			memcpy(buffer + 3, answer, strlen(answer));
+			if ((num_parts = send(client_socket_fd, &buffer, 3 + strlen(answer), 0)) != (3 + strlen(answer))) {
 			   perror("ERROR in sending first ANSWER\n");
 			   shutdown_and_goodbye();
 			   exit(EXIT_FAILURE);
@@ -301,9 +340,10 @@ case QUESTION:
 		{
 			scanf("%s", answer);
 			buffer[0] = ANSWER;
-			buffer[1] = strlen(answer);
-			memcpy(buffer + 2, answer, strlen(answer));
-			if ((num_parts = send(client_socket_fd, &buffer, 2 + strlen(answer), 0)) != (2 + strlen(answer))) {
+			buffer[1] = catagory_no;
+			buffer[2] = strlen(answer);
+			memcpy(buffer + 3, answer, strlen(answer));
+			if ((num_parts = send(client_socket_fd, &buffer, 3 + strlen(answer), 0)) != (3 + strlen(answer))) {
 			   perror("ERROR in sending first ANSWER\n");
 			   shutdown_and_goodbye();
 			   exit(EXIT_FAILURE);
@@ -325,7 +365,7 @@ case QUESTION:
                     FD_ZERO(&fds);
 					FD_SET(fileno(stdin), &fds);
                     whoWin((uint8_t )quesionbuff[1]);
-					  printf("Do you want to keep playing (Y/N)?\n");
+					  printf("Do you want to keep playing in this Category (Y/N)?\n");
 					  char* yesno;
 				    retVal = select(FD_SETSIZE, &fds, NULL, NULL, &timeout);
 					if (retVal == 0)
@@ -410,7 +450,7 @@ case QUESTION:
 				//RESUME:
 				buffer[0] = FIRSTQ;
 				buffer[1] = 0;
-				buffer[2] = 0;
+				buffer[2] = catagory_no;
 				if((num_parts = send(client_socket_fd, &buffer, 3, 0)) != 3) {
 				perror("ERROR in sending INFO\n");
 				shutdown_and_goodbye();
