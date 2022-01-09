@@ -10,6 +10,7 @@
 #include <sys/stat.h>
 
 #define BUFF_SIZE 1024
+#define SERVER_IP "192.4.5.1"
 /*messages we send*/
 #define HELLO 0
 #define INFO 1
@@ -61,12 +62,13 @@ int main(int argc, char *argv[]) {
     struct timeval timeout;
 
     // Read command line arguments, need to get server name(ip) and server port (number)
-    if (argc < 3) {
+    if (argc != 2) {
         perror("num of arguments is incorrect\n");
         exit(EXIT_FAILURE);
     }
     // Convert the port argv to the appropriate data type
-    port_no = atoi(argv[2]);
+    port_no = atoi(argv[1]);
+
 
     // setup the TCP socket
     if((client_socket_fd = socket(AF_INET, SOCK_STREAM, 0)) < 0) {
@@ -80,7 +82,7 @@ int main(int argc, char *argv[]) {
     // set up the TCP socket 1
     server_addr.sin_family = AF_INET; //IPv4
     server_addr.sin_port = htons(port_no); //host to network byte order
-    server_addr.sin_addr.s_addr = inet_addr(argv[1]); //turn char to int as needed in the struct
+    server_addr.sin_addr.s_addr = inet_addr(SERVER_IP); //turn char to int as needed in the struct
     memset(server_addr.sin_zero, '\0', sizeof(server_addr.sin_zero));
 
     // trying to connect to the server (TCP socket)
@@ -140,13 +142,14 @@ int main(int argc, char *argv[]) {
     memset(buffer, '\0', BUFF_SIZE);
     printf("Please enter your nickname (no longer then 10 letters):\n");
     buffer[0] = INFO;
-    scanf("%10s",nickname);
+    scanf("%s",nickname);
     sizeofnickname = sizeof(nickname);
-    if(sizeofnickname > 10 )
-    {
-        printf("please try again\n");
-        goto NICK;
-    }
+//    printf("sizeofnickname: %d\n",sizeofnickname); /////////// todo take care of tht
+//    if(sizeofnickname > 10 )
+//    {
+//        printf("please try again, you have entered more than 10 letters\n");
+//        goto NICK;
+//    }
     printf("Please enter your age (0-99):\n");
     scanf("%d",&age);
     buffer[1] = age;
@@ -343,7 +346,7 @@ case QUESTION:
 					  printf("yesno :%c\n",yesno);
 					  if (yesno == 'Y' || yesno == 'y') {
 						buffer[0] = FIRSTQ;
-						buffer[1] = 0;
+						buffer[1] = 1;
 						buffer[2] = 0;
 						question_f = 5 ;
 						if ((num_parts = send(client_socket_fd, &buffer, 3, 0)) != 3) {
