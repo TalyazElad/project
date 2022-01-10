@@ -81,6 +81,10 @@ int main(int argc, char *argv[]) {
     }
     //convert the port argv
     port_no = atoi(argv[1]);
+	if (port_no != 12345)
+	{
+		printf("please use port number 12345\n\n");
+	}
 
     //setup the TCP socket
     if((client_socket_fd = socket(AF_INET, SOCK_STREAM, 0)) < 0) {
@@ -135,8 +139,8 @@ int main(int argc, char *argv[]) {
     //set for select TCP
     FD_ZERO(&fds);
     FD_SET(client_socket_fd, &fds);
-	
-	//wait for massage 
+
+	//wait for massage
     retVal = select(FD_SETSIZE, &fds, NULL, NULL, &timeout);
     if(retVal <= 0 && (errno != EINTR)) {
         perror("Timeout - didn't received WELCOME\nClosing the communication\n");
@@ -224,7 +228,7 @@ int main(int argc, char *argv[]) {
     serv_addr.sin_family = AF_INET;
     serv_addr.sin_port = server_port;
     serv_addr.sin_addr.s_addr = htonl(INADDR_ANY);
-	
+
 	//open UDP socket
 	udp_sock = socket(AF_INET, SOCK_DGRAM, 0);
 	if (udp_sock < 0) {
@@ -254,7 +258,7 @@ int main(int argc, char *argv[]) {
 	shutdown_and_goodbye();
 	exit(EXIT_FAILURE);
 	}
-	
+
 	//multicast configuration
 	mreq.imr_multiaddr.s_addr = multicastGroup;
 	mreq.imr_interface.s_addr = htonl(INADDR_ANY);
@@ -272,7 +276,7 @@ int main(int argc, char *argv[]) {
 		FD_SET(client_socket_fd,&fds);
 		FD_SET(udp_sock, &fds);
 		FD_SET(fileno(stdin), &fds);
-		
+
         //wait for response - select()
         if(newFlag) {
             timeout.tv_sec = 2;
@@ -283,10 +287,10 @@ int main(int argc, char *argv[]) {
         }
         memset(buffer, '\0', BUFF_SIZE);
         memset(quesionbuff, '\0', BUFF_SIZE);
-		
+
 		//let the client that he can quit with 'q'
-        printf("At any time you can type 'q' to quit.\n");
-		
+       // printf("At any time you can type 'q' to quit.\n");
+
         if(newFlag)
             retVal = select(FD_SETSIZE, &fds, NULL, NULL, &timeout);
         else
@@ -298,11 +302,11 @@ int main(int argc, char *argv[]) {
             }
             exit(EXIT_FAILURE);
         }
-		
+
 		//input from keyboard - stdin
         if(FD_ISSET(fileno(stdin), &fds)) {
             scanf("%10s",input);
-            switch (input[0]) 
+            switch (input[0])
 			{
                 case 'q':
                     qFlag = 0;
@@ -322,7 +326,7 @@ int main(int argc, char *argv[]) {
 					exit(EXIT_FAILURE);
 				}
 			commandType = (uint8_t) quesionbuff[0];
-			switch(commandType) 
+			switch(commandType)
 			{
 				//get question from sever, scanf the answer and send
 				case QUESTION:
@@ -331,23 +335,22 @@ int main(int argc, char *argv[]) {
 					if (question_f > 0) {
 						timeout.tv_sec = 15;
 						timeout.tv_usec = 0;
-						
+
 						FD_ZERO(&fds);
 						FD_SET(fileno(stdin), &fds);
 						question_f--;
 						len = quesionbuff[1];
 						str = (char *) malloc(len + 1);
 						memcpy(str, quesionbuff +2 , len + 1 );
-						
+
 						//print the question
 						if(currunt_q == 6){currunt_q = 1;}
-						printf("\nQuestion number %d: %s\n",currunt_q, str);
+						printf("\nQuestion number %d:\n%s\nYour answer:\n",currunt_q, str);
 						currunt_q++;
-						printf("Your Answer: ");
 						retVal = select(FD_SETSIZE, &fds, NULL, NULL, &timeout);
 						if (retVal == 0)
 						{
-							printf("Timeout - gain 0 points\n");
+							printf("Timeout - gain 0 points\n\n");
 							buffer[0] = ANSWER;
 							buffer[1] = catagory_no;
 							answer[0]= 'ff';
@@ -361,7 +364,7 @@ int main(int argc, char *argv[]) {
 								shutdown_and_goodbye();
 								exit(EXIT_FAILURE);
 							}
-							printf("*******************************************\n");
+							printf("*******************************************\n\n");
 							break;
 						}
 						//input from keyboard - stdin
@@ -377,7 +380,7 @@ int main(int argc, char *argv[]) {
 								shutdown_and_goodbye();
 								exit(EXIT_FAILURE);
 							}
-							printf("*******************************************\n");
+							printf("\n*******************************************\n\n");
 						}
 					}else {
 						perror("Wrong message type - question have already asked\n");
@@ -398,9 +401,10 @@ int main(int argc, char *argv[]) {
 					printf("Game Over\n");
 					//clac winners with whoWin func
 					whoWin((uint8_t )quesionbuff[1]);
-					printf("*******************************************\n");
+					printf("*******************************************\n\n");
 					printf("Do you want to keep playing in this Category (Y/N)?\n");
 					char* yesno;
+					//if the client dont answer the question he will disconnect
 					retVal = select(FD_SETSIZE, &fds, NULL, NULL, &timeout);
 					if (retVal == 0)
 					{
@@ -415,10 +419,12 @@ int main(int argc, char *argv[]) {
 						shutdown_and_goodbye();
 						return 0;
 					}
+					// if the client answer the question
 					if(FD_ISSET(fileno(stdin), &fds))
 					{
 						scanf("%1s", &yesno);
 						printf("yesno :%c\n",yesno);
+						// the client want to stay and play in that catagory
 						if (yesno == 'Y' || yesno == 'y') {
 							buffer[0] = FIRSTQ;
 							buffer[1] = 1;
@@ -429,7 +435,8 @@ int main(int argc, char *argv[]) {
 							shutdown_and_goodbye();
 							exit(EXIT_FAILURE);
 							}
-						}else if (yesno == 'N' || yesno == 'n') {
+						// client wants to leave
+						}else if (yesno == 'N' || yesno == 'n' || yesno == 'q') {
 							buffer[0] = QUIT;
 							buffer[1] = 0;
 							if ((num_parts = send(client_socket_fd, &buffer, 2, 0)) != 2) {
@@ -440,6 +447,7 @@ int main(int argc, char *argv[]) {
 							printf("Bye Bye");
 							shutdown_and_goodbye();
 							return 0;
+						// client entered wrong value
 						}else{
 							printf("please type only (Y/N)\n");
 						}
@@ -448,7 +456,7 @@ int main(int argc, char *argv[]) {
 			}//switch
 		}//recive UDP from server
 		//recive TCP from server
-        else if(FD_ISSET(client_socket_fd, &fds)) 
+        else if(FD_ISSET(client_socket_fd, &fds))
 		{
             //printf("Got a message from server\n"); //remove
             if((byte_no = read(client_socket_fd, inbox, BUFF_SIZE)) <= 0) {
@@ -458,7 +466,7 @@ int main(int argc, char *argv[]) {
             }
 
             commandType = (uint8_t) inbox[0];
-            switch(commandType) 
+            switch(commandType)
 			{
                 case HELLOACK:
                     //we already deal with welcome = received more than one
@@ -466,16 +474,16 @@ int main(int argc, char *argv[]) {
                     shutdown_and_goodbye();
                     exit(EXIT_FAILURE);
                     break;
+				// we got our ID
                 case INFOACK:
 				    if (byte_no != 3) {
 					    printf("Wrong message format\n");
 					    shutdown_and_goodbye();
 					    exit(EXIT_FAILURE);
 				    }
-					//printf("before sock\n"); //remove
-					//printf("open udp sock\n"); //remove
-					//printf("setsockpot udp sock\n"); //remove
-					
+					int my_id = inbox[1];
+					printf("My ID in category %d is: %d\n\n",catagory_no,my_id);
+
 					//fill buffer to send - client ready to question
 					buffer[0] = FIRSTQ;
 					buffer[1] = 0;
@@ -485,7 +493,6 @@ int main(int argc, char *argv[]) {
 						shutdown_and_goodbye();
 						exit(EXIT_FAILURE);
 					}
-					lenth = sizeof(addr); //remove
 					FD_ZERO(&fds);
 					FD_SET(udp_sock,&fds);
 					break;
@@ -533,7 +540,7 @@ void whoWin(int i)
     }else{
         printf("the winners are:\n");
 	}
-    for (j = 3; j >-1 ; --j) 
+    for (j = 3; j >-1 ; --j)
 	{
         if(i%2 == 1)
         {
